@@ -183,7 +183,39 @@
     popups: [],
     particles: [],
     chests: [],
+    stats: { treesChopped: 0, bearsKilled: 0 },
+    unlockedAchievements: [],
   };
+
+  const ACHIEVEMENTS = [
+    { id: 'tree10', title: 'Bûcheron débutant', desc: 'Couper 10 arbres', reward: 20, check: () => state.stats.treesChopped >= 10 },
+    { id: 'tree100', title: 'Bûcheron chevronné', desc: 'Couper 100 arbres', reward: 60, check: () => state.stats.treesChopped >= 100 },
+    { id: 'tree500', title: 'Maître bûcheron', desc: 'Couper 500 arbres', reward: 150, check: () => state.stats.treesChopped >= 500 },
+    { id: 'bear5', title: "Chasseur d'ours", desc: 'Tuer 5 ours', reward: 30, check: () => state.stats.bearsKilled >= 5 },
+    { id: 'bear25', title: 'Terreur des bois', desc: 'Tuer 25 ours', reward: 90, check: () => state.stats.bearsKilled >= 25 },
+    { id: 'bear100', title: 'Légende de la forêt', desc: 'Tuer 100 ours', reward: 200, check: () => state.stats.bearsKilled >= 100 },
+    { id: 'territory3', title: 'Petit empire', desc: 'Agrandir le territoire 3 fois', reward: 80, check: () => state.territoryLevel >= 3 },
+    { id: 'territory8', title: 'Grand empire', desc: 'Agrandir le territoire 8 fois', reward: 250, check: () => state.territoryLevel >= 8 },
+    { id: 'coins1000', title: 'Économe', desc: 'Avoir 1000 pièces en poche', reward: 50, check: () => state.coins >= 1000 },
+    { id: 'coins10000', title: 'Fortune', desc: 'Avoir 10000 pièces en poche', reward: 300, check: () => state.coins >= 10000 },
+    { id: 'lumberjack10', title: 'Petite entreprise', desc: 'Employer 10 bûcherons', reward: 100, check: () => state.lumberjacks >= 10 },
+    { id: 'hunter10', title: 'Milice', desc: 'Employer 10 chasseurs', reward: 100, check: () => state.hunters >= 10 },
+    { id: 'wall20', title: 'Forteresse', desc: 'Construire 20 murs', reward: 80, check: () => state.walls.length >= 20 },
+  ];
+
+  function checkAchievements() {
+    let unlockedThisFrame = 0;
+    for (const ach of ACHIEVEMENTS) {
+      if (state.unlockedAchievements.includes(ach.id)) continue;
+      if (ach.check()) {
+        state.unlockedAchievements.push(ach.id);
+        state.coins += ach.reward;
+        sfx.bonus();
+        spawnPopup(state.player.x, state.player.y - 50 - unlockedThisFrame * 24, `🏆 ${ach.title} ! +${ach.reward} 🪙`, '#ffd166');
+        unlockedThisFrame++;
+      }
+    }
+  }
 
   let nextChestAt = 0;
 
@@ -248,6 +280,8 @@
       towers: state.towers,
       walls: state.walls,
       doors: state.doors,
+      stats: state.stats,
+      unlockedAchievements: state.unlockedAchievements,
       lastSaveAt: Date.now(),
     };
     localStorage.setItem('lumberjackSave', JSON.stringify(data));
@@ -267,6 +301,10 @@
       state.towers = Array.isArray(data.towers) ? data.towers : [];
       state.walls = Array.isArray(data.walls) ? data.walls : [];
       state.doors = Array.isArray(data.doors) ? data.doors : [];
+      state.stats = data.stats && typeof data.stats === 'object'
+        ? { treesChopped: data.stats.treesChopped || 0, bearsKilled: data.stats.bearsKilled || 0 }
+        : { treesChopped: 0, bearsKilled: 0 };
+      state.unlockedAchievements = Array.isArray(data.unlockedAchievements) ? data.unlockedAchievements : [];
       if (data.lastSaveAt) {
         const elapsedSeconds = (Date.now() - data.lastSaveAt) / 1000;
         offlineEarnings = simulateOfflineEarnings(elapsedSeconds);
@@ -309,6 +347,7 @@
   }
 
   function bearKillReward(x, y) {
+    state.stats.bearsKilled++;
     let coins = 2;
     let bonus = false;
     if (Math.random() < BEAR_BONUS_CHANCE) {
@@ -409,6 +448,7 @@
           if (t.hp <= 0) {
             t.alive = false;
             t.respawnAt = now + randRange(8000, 15000);
+            state.stats.treesChopped++;
             w.wood = Math.min(WORKER_CAPACITY, w.wood + Math.floor(randRange(1, 4)));
             w.targetTree = null;
             w.state = 'toBase';
@@ -698,6 +738,34 @@
   });
   closeShopBtn.addEventListener('click', () => shopOverlay.classList.add('hidden'));
 
+  const achievementsBtn = document.getElementById('achievementsBtn');
+  const achievementsOverlay = document.getElementById('achievementsOverlay');
+  const closeAchievementsBtn = document.getElementById('closeAchievementsBtn');
+  const achievementsList = document.getElementById('achievementsList');
+
+  function renderAchievements() {
+    achievementsList.innerHTML = '';
+    for (const ach of ACHIEVEMENTS) {
+      const unlocked = state.unlockedAchievements.includes(ach.id);
+      const row = document.createElement('div');
+      row.className = `ach-item${unlocked ? '' : ' locked'}`;
+      row.innerHTML = `
+        <div class="ach-icon">${unlocked ? '🏆' : '🔒'}</div>
+        <div>
+          <div class="ach-title">${ach.title}</div>
+          <div class="ach-desc">${ach.desc} ${unlocked ? '' : `(+${ach.reward} 🪙)`}</div>
+        </div>
+      `;
+      achievementsList.appendChild(row);
+    }
+  }
+
+  achievementsBtn.addEventListener('click', () => {
+    renderAchievements();
+    achievementsOverlay.classList.remove('hidden');
+  });
+  closeAchievementsBtn.addEventListener('click', () => achievementsOverlay.classList.add('hidden'));
+
   towerModeHint.addEventListener('click', () => {
     state.placementMode = null;
     towerModeHint.classList.add('hidden');
@@ -816,6 +884,8 @@
     state.chests = [];
     state.popups = [];
     state.particles = [];
+    state.stats = { treesChopped: 0, bearsKilled: 0 };
+    state.unlockedAchievements = [];
     nextChestAt = performance.now() + randRange(15000, 40000);
     for (let i = 0; i < maxTrees(); i++) spawnTree();
     for (let i = 0; i < targetBearCount(); i++) spawnBear();
@@ -881,6 +951,7 @@
         if (t.hp <= 0) {
           t.alive = false;
           t.respawnAt = now + randRange(8000, 15000);
+          state.stats.treesChopped++;
           if (t.golden) {
             const gained = Math.round(randRange(8, 15));
             const bonusCoins = Math.round(randRange(20, 40));
@@ -1031,6 +1102,8 @@
       pt.y += pt.vy * dt;
       pt.vy += 220 * dt; // gravity
     }
+
+    checkAchievements();
 
     // HUD
     coinsLabel.textContent = Math.floor(state.coins);

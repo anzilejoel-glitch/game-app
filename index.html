@@ -21,6 +21,7 @@
   </div>
 
   <button id="shopBtn" class="icon-btn top-right" aria-label="Boutique">🛒</button>
+  <button id="achievementsBtn" class="icon-btn top-right-2" aria-label="Succès">🏆</button>
 
   <canvas id="minimap"></canvas>
 
@@ -58,7 +59,7 @@
   <div id="confirmOverlay" class="overlay hidden">
     <div class="overlay-card">
       <h2>Es-tu sûr ?</h2>
-      <p>Toute la progression sera perdue : pièces, bois, bûcherons, chasseurs, tours, murs, portes et territoire. Cette action est irréversible.</p>
+      <p>Toute la progression sera perdue : pièces, bois, bûcherons, chasseurs, tours, murs, portes, territoire et succès. Cette action est irréversible.</p>
       <button id="confirmYesBtn" class="danger-btn">Oui, tout perdre</button>
       <button id="confirmNoBtn" class="primary-btn">Annuler</button>
     </div>
@@ -69,6 +70,16 @@
       <h2>Bon retour !</h2>
       <p id="welcomeBackInfo"></p>
       <button id="welcomeBackOkBtn" class="primary-btn">Super !</button>
+    </div>
+  </div>
+
+  <div id="achievementsOverlay" class="overlay hidden">
+    <div class="overlay-card">
+      <div class="overlay-header">
+        <h2>Succès</h2>
+        <button id="closeAchievementsBtn" class="icon-btn" aria-label="Fermer">✕</button>
+      </div>
+      <div id="achievementsList"></div>
     </div>
   </div>
 </div>

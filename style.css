@@ -90,6 +90,12 @@ html, body {
   right: 14px;
 }
 
+.top-right-2 {
+  position: absolute;
+  top: calc(68px + env(safe-area-inset-top));
+  right: 14px;
+}
+
 #minimap {
   position: absolute;
   bottom: calc(30px + env(safe-area-inset-bottom));
@@ -298,4 +304,43 @@ html, body {
 .buy-btn:disabled {
   background: rgba(255,255,255,0.12);
   color: rgba(255,255,255,0.35);
+}
+
+.ach-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.ach-item:last-child {
+  border-bottom: none;
+}
+
+.ach-icon {
+  font-size: 1.4rem;
+  width: 34px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.ach-item.locked .ach-icon {
+  opacity: 0.3;
+}
+
+.ach-item.locked .ach-title {
+  color: #9fb8a5;
+}
+
+.ach-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: #ffd166;
+}
+
+.ach-desc {
+  font-size: 0.78rem;
+  color: #9fb8a5;
+  margin-top: 2px;
 }
