@@ -56,6 +56,11 @@
   const MINIMAP_SIZE = 120;
   const MINIMAP_WORLD_RADIUS = 900;
   const BASE_SELL_RATE = 0.5; // logs/s always converted to coins, even with no Vendeur
+  const PLAYER_RADIUS = 16;
+  const BEAR_RADIUS = 16;
+  const NPC_RADIUS = 12;
+  const WALL_RADIUS = 20;
+  const WALL_MIN_SEPARATION = 32;
 
   // ---------- Sound & haptics ----------
   let audioCtx = null;
@@ -102,6 +107,8 @@
     hunter: { base: 60, growth: 1.2 },
     tower: { base: 90, growth: 1.25 },
     territory: { base: 120, growth: 1.4 },
+    wall: { base: 15, growth: 1.08 },
+    door: { base: 25, growth: 1.1 },
   };
 
   function costOf(kind, count) {
@@ -118,6 +125,8 @@
     hunters: 0,
     territoryLevel: 0,
     towers: [],
+    walls: [],
+    doors: [],
     player: {
       x: BASE_X, y: BASE_Y - 40,
       hp: PLAYER_MAX_HP,
@@ -134,7 +143,7 @@
     chopTarget: null,
     attacking: false,
     attackTarget: null,
-    towerPlacementMode: false,
+    placementMode: null, // null | 'tower' | 'wall' | 'door'
     dead: false,
   };
 
@@ -168,6 +177,8 @@
       hunters: state.hunters,
       territoryLevel: state.territoryLevel,
       towers: state.towers,
+      walls: state.walls,
+      doors: state.doors,
     };
     localStorage.setItem('lumberjackSave', JSON.stringify(data));
   }
@@ -184,6 +195,8 @@
       state.hunters = data.hunters || 0;
       state.territoryLevel = data.territoryLevel || 0;
       state.towers = Array.isArray(data.towers) ? data.towers : [];
+      state.walls = Array.isArray(data.walls) ? data.walls : [];
+      state.doors = Array.isArray(data.doors) ? data.doors : [];
     } catch (e) { /* ignore corrupt save */ }
   }
 
@@ -197,6 +210,20 @@
       y = randRange(80, WORLD_SIZE - 80);
     } while (Math.hypot(x - BASE_X, y - BASE_Y) < minDistFromBase);
     return { x, y };
+  }
+
+  // Pushes entity out of any obstacle it overlaps (walls block everyone, doors block only bears)
+  function resolveWallCollision(entity, entityRadius, blockedByDoors) {
+    const obstacles = blockedByDoors ? state.walls.concat(state.doors) : state.walls;
+    for (const o of obstacles) {
+      const dx = entity.x - o.x, dy = entity.y - o.y;
+      const dist = Math.hypot(dx, dy) || 0.001;
+      const minDist = entityRadius + WALL_RADIUS;
+      if (dist < minDist) {
+        entity.x = o.x + (dx / dist) * minDist;
+        entity.y = o.y + (dy / dist) * minDist;
+      }
+    }
   }
 
   function spawnTree() {
@@ -298,6 +325,7 @@
           w.y += (dy / d) * WORKER_SPEED * dt;
         }
       }
+      resolveWallCollision(w, NPC_RADIUS, false);
     }
   }
 
@@ -364,6 +392,7 @@
           }
         }
       }
+      resolveWallCollision(h, NPC_RADIUS, false);
     }
   }
 
@@ -497,11 +526,27 @@
       getCount: () => state.towers.length,
     },
     {
+      kind: 'wall', title: 'Mur',
+      desc: 'Bloque le passage des ours (et le tien) - place-les côte à côte',
+      getCount: () => state.walls.length,
+    },
+    {
+      kind: 'door', title: 'Porte',
+      desc: 'Bloque les ours mais te laisse passer, toi et tes équipes',
+      getCount: () => state.doors.length,
+    },
+    {
       kind: 'territory', title: 'Agrandir le territoire',
       desc: '+150 de rayon sûr, plus d\'arbres disponibles',
       getCount: () => state.territoryLevel,
     },
   ];
+
+  const PLACEMENT_HINTS = {
+    tower: 'Touche la carte pour placer la tour (Annuler)',
+    wall: 'Touche la carte pour placer un mur (Annuler)',
+    door: 'Touche la carte pour placer une porte (Annuler)',
+  };
 
   function renderShop() {
     shopList.innerHTML = '';
@@ -524,11 +569,13 @@
   }
 
   function buyItem(kind) {
-    if (kind === 'tower') {
-      const cost = costOf('tower', state.towers.length);
+    if (PLACEMENT_HINTS[kind]) {
+      const arr = kind === 'tower' ? state.towers : kind === 'wall' ? state.walls : state.doors;
+      const cost = costOf(kind, arr.length);
       if (state.coins < cost) return;
       shopOverlay.classList.add('hidden');
-      state.towerPlacementMode = true;
+      state.placementMode = kind;
+      towerModeHint.textContent = PLACEMENT_HINTS[kind];
       towerModeHint.classList.remove('hidden');
       return;
     }
@@ -551,24 +598,39 @@
   closeShopBtn.addEventListener('click', () => shopOverlay.classList.add('hidden'));
 
   towerModeHint.addEventListener('click', () => {
-    state.towerPlacementMode = false;
+    state.placementMode = null;
     towerModeHint.classList.add('hidden');
   });
 
-  // ---------- Canvas tap: tower placement ----------
+  // ---------- Canvas tap: place tower / wall / door ----------
   canvas.addEventListener('pointerdown', (e) => {
-    if (!state.towerPlacementMode) return;
+    const mode = state.placementMode;
+    if (!mode) return;
     const worldX = state.player.x + (e.clientX - cssWidth / 2);
     const worldY = state.player.y + (e.clientY - cssHeight / 2);
     const distFromBase = Math.hypot(worldX - BASE_X, worldY - BASE_Y);
-    if (distFromBase > territoryRadius() || distFromBase < 90) return;
-    const tooClose = state.towers.some(t => Math.hypot(t.x - worldX, t.y - worldY) < 80);
-    if (tooClose) return;
-    const cost = costOf('tower', state.towers.length);
-    if (state.coins < cost) return;
-    state.coins -= cost;
-    state.towers.push({ x: worldX, y: worldY });
-    state.towerPlacementMode = false;
+
+    if (mode === 'tower') {
+      if (distFromBase > territoryRadius() || distFromBase < 90) return;
+      const tooClose = state.towers.some(t => Math.hypot(t.x - worldX, t.y - worldY) < 80);
+      if (tooClose) return;
+      const cost = costOf('tower', state.towers.length);
+      if (state.coins < cost) return;
+      state.coins -= cost;
+      state.towers.push({ x: worldX, y: worldY });
+    } else {
+      if (distFromBase > territoryRadius() + 40 || distFromBase < 60) return;
+      const combined = state.walls.concat(state.doors);
+      const tooClose = combined.some(o => Math.hypot(o.x - worldX, o.y - worldY) < WALL_MIN_SEPARATION);
+      if (tooClose) return;
+      const arr = mode === 'wall' ? state.walls : state.doors;
+      const cost = costOf(mode, arr.length);
+      if (state.coins < cost) return;
+      state.coins -= cost;
+      arr.push({ x: worldX, y: worldY });
+    }
+
+    state.placementMode = null;
     towerModeHint.classList.add('hidden');
     save();
   });
@@ -620,6 +682,8 @@
     state.hunters = 0;
     state.territoryLevel = 0;
     state.towers = [];
+    state.walls = [];
+    state.doors = [];
     state.trees = [];
     state.bears = [];
     state.workers = [];
@@ -632,7 +696,7 @@
     state.player.invulnerableUntil = 0;
     state.player.facing = 0;
     state.chopTarget = null;
-    state.towerPlacementMode = false;
+    state.placementMode = null;
     state.dead = false;
     for (let i = 0; i < maxTrees(); i++) spawnTree();
     for (let i = 0; i < targetBearCount(); i++) spawnBear();
@@ -682,6 +746,7 @@
         p.facing = Math.atan2(move.y, move.x);
         p.x = Math.max(20, Math.min(WORLD_SIZE - 20, p.x));
         p.y = Math.max(20, Math.min(WORLD_SIZE - 20, p.y));
+        resolveWallCollision(p, PLAYER_RADIUS, false);
       }
 
       // HP regen
@@ -805,6 +870,7 @@
       }
       b.x = Math.max(20, Math.min(WORLD_SIZE - 20, b.x));
       b.y = Math.max(20, Math.min(WORLD_SIZE - 20, b.y));
+      resolveWallCollision(b, BEAR_RADIUS, true);
     }
 
     // HUD
@@ -877,6 +943,35 @@
       ctx.lineTo(s.x + 10, s.y - 18);
       ctx.closePath();
       ctx.fill();
+    }
+
+    // walls
+    for (const w of state.walls) {
+      const s = worldToScreen(w.x, w.y);
+      if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      ctx.fillStyle = '#5c4530';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, WALL_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#3d3120';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // doors
+    for (const d of state.doors) {
+      const s = worldToScreen(d.x, d.y);
+      if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      ctx.fillStyle = '#c9a66b';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, WALL_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#8d6b3f';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, WALL_RADIUS - 7, -Math.PI * 0.75, Math.PI * -0.25);
+      ctx.stroke();
     }
 
     // trees
@@ -1039,6 +1134,24 @@
       const m = toMini(h.x, h.y);
       minimapCtx.beginPath();
       minimapCtx.arc(m.x, m.y, 2, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
+
+    minimapCtx.fillStyle = '#5c4530';
+    for (const w of state.walls) {
+      if (Math.hypot(w.x - state.player.x, w.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(w.x, w.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 1.8, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
+
+    minimapCtx.fillStyle = '#c9a66b';
+    for (const d of state.doors) {
+      if (Math.hypot(d.x - state.player.x, d.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(d.x, d.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 1.8, 0, Math.PI * 2);
       minimapCtx.fill();
     }
 
