@@ -17,14 +17,21 @@
   window.addEventListener('resize', resize);
   resize();
 
+  const minimapCanvas = document.getElementById('minimap');
+  const minimapCtx = minimapCanvas.getContext('2d');
+  minimapCanvas.width = 240;
+  minimapCanvas.height = 240;
+  minimapCtx.scale(2, 2);
+
   // ---------- World constants ----------
   const WORLD_SIZE = 3200;
   const BASE_X = WORLD_SIZE / 2;
   const BASE_Y = WORLD_SIZE / 2;
   const DEPOT_RADIUS = 70;
-  const CHOP_RANGE = 60;
+  const CHOP_RANGE = 78;
   const CHOP_RATE = 32; // tree hp per second
   const TREE_MAX_HP = 60;
+  const TREE_CANOPY_RADIUS = 27;
   const WOOD_PRICE = 5;
   const SELL_RATE = 4; // logs per second when at depot
   const PLAYER_SPEED = 210;
@@ -35,6 +42,13 @@
   const BEAR_MAX_HP = 60;
   const TOWER_RADIUS = 170;
   const TOWER_DPS = 22;
+  const WORKER_SPEED = 140;
+  const WORKER_CHOP_RATE = 18; // slower than the player
+  const WORKER_CAPACITY = 3;
+  const WORKER_ARRIVE_RANGE = 30;
+  const STOCKPILE_CAP = 300;
+  const MINIMAP_SIZE = 120;
+  const MINIMAP_WORLD_RADIUS = 900;
 
   const COSTS = {
     lumberjack: { base: 20, growth: 1.15 },
@@ -69,7 +83,7 @@
     },
     trees: [],
     bears: [],
-    chopping: false,
+    workers: [],
     chopTarget: null,
     towerPlacementMode: false,
     dead: false,
@@ -84,7 +98,7 @@
   }
 
   function targetBearCount() {
-    return Math.min(3 + state.territoryLevel, 12);
+    return Math.min(6 + state.territoryLevel * 2, 20);
   }
 
   function hunterDamageReduction() {
@@ -145,11 +159,79 @@
     });
   }
 
+  function spawnWorker() {
+    const angle = randRange(0, Math.PI * 2);
+    const dist = randRange(20, 50);
+    state.workers.push({
+      x: BASE_X + Math.cos(angle) * dist,
+      y: BASE_Y + Math.sin(angle) * dist,
+      state: 'toTree',
+      targetTree: null,
+      wood: 0,
+    });
+  }
+
   function ensurePopulation() {
     while (state.trees.filter(t => t.alive).length < maxTrees() && state.trees.length < maxTrees() + 5) {
       spawnTree();
     }
     while (state.bears.length < targetBearCount()) spawnBear();
+    while (state.workers.length < state.lumberjacks) spawnWorker();
+  }
+
+  function nearestAliveTreeFor(x, y) {
+    let best = null, bestDist = Infinity;
+    for (const t of state.trees) {
+      if (!t.alive) continue;
+      const d = Math.hypot(t.x - x, t.y - y);
+      if (d < bestDist) { best = t; bestDist = d; }
+    }
+    return best;
+  }
+
+  function updateWorkers(dt, now) {
+    for (const w of state.workers) {
+      if (w.state === 'toTree') {
+        if (!w.targetTree || !w.targetTree.alive) {
+          w.targetTree = nearestAliveTreeFor(w.x, w.y);
+        }
+        if (w.targetTree) {
+          const dx = w.targetTree.x - w.x, dy = w.targetTree.y - w.y;
+          const d = Math.hypot(dx, dy);
+          if (d < WORKER_ARRIVE_RANGE) {
+            w.state = 'chopping';
+          } else {
+            w.x += (dx / d) * WORKER_SPEED * dt;
+            w.y += (dy / d) * WORKER_SPEED * dt;
+          }
+        }
+      } else if (w.state === 'chopping') {
+        const t = w.targetTree;
+        if (!t || !t.alive) {
+          w.state = 'toTree';
+        } else {
+          t.hp -= WORKER_CHOP_RATE * dt;
+          if (t.hp <= 0) {
+            t.alive = false;
+            t.respawnAt = now + randRange(8000, 15000);
+            w.wood = Math.min(WORKER_CAPACITY, w.wood + Math.floor(randRange(1, 4)));
+            w.targetTree = null;
+            w.state = 'toBase';
+          }
+        }
+      } else if (w.state === 'toBase') {
+        const dx = BASE_X - w.x, dy = BASE_Y - w.y;
+        const d = Math.hypot(dx, dy);
+        if (d < DEPOT_RADIUS) {
+          state.stockpile = Math.min(STOCKPILE_CAP, state.stockpile + w.wood);
+          w.wood = 0;
+          w.state = 'toTree';
+        } else {
+          w.x += (dx / d) * WORKER_SPEED * dt;
+          w.y += (dy / d) * WORKER_SPEED * dt;
+        }
+      }
+    }
   }
 
   // ---------- Input: joystick ----------
@@ -217,20 +299,7 @@
     return { x, y };
   }
 
-  // ---------- Input: chop button ----------
-  const chopWrap = document.getElementById('chopWrap');
-  const chopBtn = document.getElementById('chopBtn');
-  const chopRing = document.getElementById('chopRing').querySelector('circle');
-  const RING_CIRC = 2 * Math.PI * 19;
-
-  chopBtn.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    if (state.chopTarget) state.chopping = true;
-  });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => {
-    chopBtn.addEventListener(ev, () => { state.chopping = false; });
-  });
-
+  // ---------- Auto-chop: nearest living tree in range ----------
   function findNearestTree() {
     let best = null, bestDist = Infinity;
     for (const t of state.trees) {
@@ -251,7 +320,7 @@
   const SHOP_ITEMS = [
     {
       kind: 'lumberjack', title: 'Bûcheron',
-      desc: '+0.6 bois/s automatiquement au dépôt',
+      desc: 'Coupe des arbres et ramène le bois au dépôt',
       getCount: () => state.lumberjacks,
     },
     {
@@ -310,6 +379,7 @@
     if (state.coins < cost) return;
     state.coins -= cost;
     state[countKey] += 1;
+    if (kind === 'lumberjack') spawnWorker();
     ensurePopulation();
     renderShop();
     save();
@@ -398,23 +468,17 @@
         p.hp = Math.min(PLAYER_MAX_HP, p.hp + 3 * dt);
       }
 
-      // Chopping
+      // Auto-chop the nearest tree in range
       state.chopTarget = findNearestTree();
-      chopWrap.classList.toggle('hidden', !state.chopTarget);
-      if (state.chopping && state.chopTarget && state.chopTarget.alive) {
+      if (state.chopTarget) {
         const t = state.chopTarget;
         t.hp -= CHOP_RATE * dt;
-        const ratio = Math.max(0, t.hp / TREE_MAX_HP);
-        chopRing.style.strokeDashoffset = String(RING_CIRC * ratio);
         if (t.hp <= 0) {
           t.alive = false;
           t.respawnAt = now + randRange(8000, 15000);
           const gained = Math.floor(randRange(1, 4));
           p.wood = Math.min(p.woodCapacity, p.wood + gained);
-          state.chopping = false;
         }
-      } else {
-        chopRing.style.strokeDashoffset = String(RING_CIRC);
       }
 
       // Selling at depot
@@ -436,11 +500,9 @@
       }
     }
     ensurePopulation();
+    updateWorkers(dt, now);
 
     // Passive economy
-    if (state.lumberjacks > 0) {
-      state.stockpile = Math.min(300, state.stockpile + state.lumberjacks * 0.6 * dt);
-    }
     if (state.sellers > 0 && state.stockpile > 0) {
       const sold = Math.min(state.stockpile, state.sellers * 1.0 * dt);
       state.stockpile -= sold;
@@ -601,19 +663,37 @@
     for (const t of state.trees) {
       if (!t.alive) continue;
       const s = worldToScreen(t.x, t.y);
-      if (s.x < -40 || s.x > cssWidth + 40 || s.y < -40 || s.y > cssHeight + 40) continue;
+      if (s.x < -50 || s.x > cssWidth + 50 || s.y < -50 || s.y > cssHeight + 50) continue;
       ctx.fillStyle = '#6b4321';
-      ctx.fillRect(s.x - 4, s.y - 6, 8, 18);
+      ctx.fillRect(s.x - 6, s.y - 8, 12, 26);
       ctx.fillStyle = '#2e7d42';
       ctx.beginPath();
-      ctx.arc(s.x, s.y - 16, 18, 0, Math.PI * 2);
+      ctx.arc(s.x, s.y - 22, TREE_CANOPY_RADIUS, 0, Math.PI * 2);
       ctx.fill();
-      if (state.chopTarget === t && state.chopping) {
+      if (state.chopTarget === t) {
+        const ratio = Math.max(0, t.hp / TREE_MAX_HP);
         ctx.strokeStyle = '#ffe066';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(s.x, s.y - 16, 22, 0, Math.PI * 2);
+        ctx.arc(s.x, s.y - 22, TREE_CANOPY_RADIUS + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - ratio));
         ctx.stroke();
+      }
+    }
+
+    // workers (hired lumberjacks)
+    for (const w of state.workers) {
+      const s = worldToScreen(w.x, w.y);
+      if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      ctx.fillStyle = '#c9852b';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      if (w.wood > 0) {
+        ctx.fillStyle = '#8d5a2b';
+        ctx.fillRect(s.x - 5, s.y - 20, 10, 8);
       }
     }
 
@@ -656,6 +736,73 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+
+    renderMinimap();
+  }
+
+  function renderMinimap() {
+    const cx = MINIMAP_SIZE / 2, cy = MINIMAP_SIZE / 2;
+    const scale = (MINIMAP_SIZE / 2) / MINIMAP_WORLD_RADIUS;
+    const toMini = (x, y) => ({
+      x: cx + (x - state.player.x) * scale,
+      y: cy + (y - state.player.y) * scale,
+    });
+
+    minimapCtx.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+    minimapCtx.save();
+    minimapCtx.beginPath();
+    minimapCtx.arc(cx, cy, MINIMAP_SIZE / 2, 0, Math.PI * 2);
+    minimapCtx.clip();
+    minimapCtx.fillStyle = '#152a19';
+    minimapCtx.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+
+    const baseM = toMini(BASE_X, BASE_Y);
+    minimapCtx.strokeStyle = 'rgba(255, 224, 130, 0.5)';
+    minimapCtx.lineWidth = 1.5;
+    minimapCtx.beginPath();
+    minimapCtx.arc(baseM.x, baseM.y, territoryRadius() * scale, 0, Math.PI * 2);
+    minimapCtx.stroke();
+
+    minimapCtx.fillStyle = '#8d5a2b';
+    minimapCtx.beginPath();
+    minimapCtx.arc(baseM.x, baseM.y, 4, 0, Math.PI * 2);
+    minimapCtx.fill();
+
+    minimapCtx.fillStyle = '#2e7d42';
+    for (const t of state.trees) {
+      if (!t.alive) continue;
+      if (Math.hypot(t.x - state.player.x, t.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(t.x, t.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 2, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
+
+    minimapCtx.fillStyle = '#c9852b';
+    for (const w of state.workers) {
+      if (Math.hypot(w.x - state.player.x, w.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(w.x, w.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 2, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
+
+    minimapCtx.fillStyle = '#e74c3c';
+    for (const b of state.bears) {
+      if (!b.alive) continue;
+      if (Math.hypot(b.x - state.player.x, b.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(b.x, b.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 2.5, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
+
+    minimapCtx.fillStyle = '#3498db';
+    minimapCtx.beginPath();
+    minimapCtx.arc(cx, cy, 4, 0, Math.PI * 2);
+    minimapCtx.fill();
+
+    minimapCtx.restore();
   }
 
   // ---------- Main loop ----------
@@ -671,6 +818,7 @@
   load();
   for (let i = 0; i < maxTrees(); i++) spawnTree();
   for (let i = 0; i < targetBearCount(); i++) spawnBear();
+  for (let i = 0; i < state.lumberjacks; i++) spawnWorker();
   renderShop();
 
   window.addEventListener('beforeunload', save);
