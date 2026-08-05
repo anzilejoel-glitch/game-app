@@ -102,6 +102,29 @@ html, body {
   z-index: 5;
 }
 
+#attackWrap {
+  position: absolute;
+  bottom: calc(40px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+}
+
+.attack-btn {
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  background: rgba(231, 76, 60, 0.9);
+  border: 3px solid rgba(255,255,255,0.25);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.attack-btn:active {
+  background: rgba(231, 76, 60, 1);
+}
+
 #sellHint, #towerModeHint {
   position: absolute;
   bottom: calc(150px + env(safe-area-inset-bottom));

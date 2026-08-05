@@ -40,6 +40,8 @@
   const BEAR_ATTACK_RANGE = 34;
   const BEAR_DAMAGE = 9;
   const BEAR_MAX_HP = 60;
+  const PLAYER_ATTACK_RANGE = 70;
+  const PLAYER_ATTACK_DPS = 26;
   const TOWER_RADIUS = 170;
   const TOWER_DPS = 22;
   const WORKER_SPEED = 140;
@@ -130,6 +132,8 @@
     workers: [],
     hunterUnits: [],
     chopTarget: null,
+    attacking: false,
+    attackTarget: null,
     towerPlacementMode: false,
     dead: false,
   };
@@ -439,6 +443,28 @@
     return best;
   }
 
+  // ---------- Attack button: nearest living bear in range ----------
+  const attackWrap = document.getElementById('attackWrap');
+  const attackBtn = document.getElementById('attackBtn');
+
+  attackBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (state.attackTarget) state.attacking = true;
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => {
+    attackBtn.addEventListener(ev, () => { state.attacking = false; });
+  });
+
+  function findNearestBear() {
+    let best = null, bestDist = Infinity;
+    for (const b of state.bears) {
+      if (!b.alive) continue;
+      const d = Math.hypot(b.x - state.player.x, b.y - state.player.y);
+      if (d < PLAYER_ATTACK_RANGE && d < bestDist) { best = b; bestDist = d; }
+    }
+    return best;
+  }
+
   // ---------- Shop ----------
   const shopBtn = document.getElementById('shopBtn');
   const shopOverlay = document.getElementById('shopOverlay');
@@ -671,6 +697,21 @@
           const gained = Math.floor(randRange(1, 4));
           p.wood = Math.min(p.woodCapacity, p.wood + gained);
           sfx.harvest();
+        }
+      }
+
+      // Attack button: damage the nearest bear in range while held
+      state.attackTarget = findNearestBear();
+      attackWrap.classList.toggle('hidden', !state.attackTarget);
+      if (state.attacking && state.attackTarget && state.attackTarget.alive) {
+        const b = state.attackTarget;
+        b.hp -= PLAYER_ATTACK_DPS * dt;
+        if (b.hp <= 0) {
+          b.alive = false;
+          b.respawnAt = now + randRange(4000, 9000);
+          state.coins += 2;
+          sfx.bearDown();
+          state.attacking = false;
         }
       }
 
@@ -912,6 +953,13 @@
       ctx.fillRect(s.x - 16, s.y - 30, 32, 4);
       ctx.fillStyle = '#e74c3c';
       ctx.fillRect(s.x - 16, s.y - 30, 32 * ratio, 4);
+      if (state.attacking && state.attackTarget === b) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 22, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     // player
