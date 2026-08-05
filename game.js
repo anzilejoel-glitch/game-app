@@ -1187,32 +1187,69 @@
       ctx.fill();
     }
 
-    // walls
+    // wall/door connecting rails, drawn under the posts so it reads as one fence line
+    const fencePieces = state.walls.concat(state.doors);
+    if (fencePieces.length > 1) {
+      ctx.strokeStyle = '#4a3520';
+      ctx.lineWidth = 9;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < fencePieces.length; i++) {
+        for (let j = i + 1; j < fencePieces.length; j++) {
+          const a = fencePieces[i], b = fencePieces[j];
+          if (Math.hypot(a.x - b.x, a.y - b.y) < WALL_MIN_SEPARATION * 1.6) {
+            const sA = worldToScreen(a.x, a.y);
+            const sB = worldToScreen(b.x, b.y);
+            ctx.beginPath();
+            ctx.moveTo(sA.x, sA.y);
+            ctx.lineTo(sB.x, sB.y);
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    // walls: standing log posts
     for (const w of state.walls) {
       const s = worldToScreen(w.x, w.y);
       if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
-      ctx.fillStyle = '#5c4530';
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.beginPath();
-      ctx.arc(s.x, s.y, WALL_RADIUS, 0, Math.PI * 2);
+      ctx.ellipse(s.x, s.y + 14, 12, 5, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.fillStyle = '#5c4530';
+      ctx.fillRect(s.x - 8, s.y - 18, 16, 34);
+      ctx.fillStyle = '#4a3520';
+      ctx.fillRect(s.x - 8, s.y - 18, 16, 6);
       ctx.strokeStyle = '#3d3120';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(s.x - 3, s.y - 11);
+      ctx.lineTo(s.x - 3, s.y + 14);
+      ctx.moveTo(s.x + 3, s.y - 11);
+      ctx.lineTo(s.x + 3, s.y + 14);
       ctx.stroke();
     }
 
-    // doors
+    // doors: an open gate frame (visible gap signals it's passable)
     for (const d of state.doors) {
       const s = worldToScreen(d.x, d.y);
       if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
-      ctx.fillStyle = '#c9a66b';
+      const postOffset = 14;
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
       ctx.beginPath();
-      ctx.arc(s.x, s.y, WALL_RADIUS, 0, Math.PI * 2);
+      ctx.ellipse(s.x, s.y + 14, 18, 5, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.fillStyle = '#c9a66b';
+      ctx.fillRect(s.x - postOffset - 4, s.y - 18, 8, 34);
+      ctx.fillRect(s.x + postOffset - 4, s.y - 18, 8, 34);
+      ctx.fillStyle = '#8d6b3f';
+      ctx.fillRect(s.x - postOffset - 4, s.y - 20, 8, 6);
+      ctx.fillRect(s.x + postOffset - 4, s.y - 20, 8, 6);
       ctx.strokeStyle = '#8d6b3f';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.arc(s.x, s.y, WALL_RADIUS - 7, -Math.PI * 0.75, Math.PI * -0.25);
+      ctx.moveTo(s.x - postOffset, s.y - 20);
+      ctx.lineTo(s.x + postOffset, s.y - 20);
       ctx.stroke();
     }
 
