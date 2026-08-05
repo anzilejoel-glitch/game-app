@@ -211,6 +211,22 @@ html, body {
   color: rgba(255,255,255,0.4);
 }
 
+.danger-btn {
+  margin-top: 10px;
+  width: 100%;
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  border: 1px solid rgba(231, 76, 60, 0.4);
+  font-weight: 700;
+  padding: 12px 0;
+  border-radius: 999px;
+  font-size: 0.95rem;
+}
+
+.danger-btn:active {
+  background: rgba(231, 76, 60, 0.28);
+}
+
 .shop-item {
   display: flex;
   align-items: center;

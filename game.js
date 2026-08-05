@@ -53,6 +53,46 @@
   const HUNTER_PATROL_RADIUS = 170;
   const MINIMAP_SIZE = 120;
   const MINIMAP_WORLD_RADIUS = 900;
+  const BASE_SELL_RATE = 0.5; // logs/s always converted to coins, even with no Vendeur
+
+  // ---------- Sound & haptics ----------
+  let audioCtx = null;
+  function unlockAudio() {
+    if (!audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) audioCtx = new Ctx();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  }
+  window.addEventListener('pointerdown', unlockAudio, { once: true });
+
+  function beep(freq, duration, type, volume) {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    const t0 = audioCtx.currentTime;
+    gain.gain.setValueAtTime(volume, t0);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+    osc.start(t0);
+    osc.stop(t0 + duration);
+  }
+
+  function vibrate(pattern) {
+    if (navigator.vibrate) navigator.vibrate(pattern);
+  }
+
+  const sfx = {
+    harvest() { beep(660, 0.12, 'triangle', 0.12); vibrate(15); },
+    coin() { beep(880, 0.08, 'square', 0.06); },
+    hit() { beep(120, 0.15, 'sawtooth', 0.18); vibrate(40); },
+    death() { beep(90, 0.5, 'sawtooth', 0.2); vibrate([50, 50, 50]); },
+    revive() { beep(520, 0.25, 'sine', 0.15); vibrate(20); },
+    bearDown() { beep(740, 0.15, 'triangle', 0.12); },
+  };
 
   const COSTS = {
     lumberjack: { base: 20, growth: 1.15 },
@@ -104,6 +144,10 @@
 
   function targetBearCount() {
     return Math.min(6 + state.territoryLevel * 2, 20);
+  }
+
+  function reviveCost() {
+    return Math.round(40 + state.territoryLevel * 25);
   }
 
   function hunterDamageReduction() {
@@ -311,6 +355,7 @@
               state.coins += 2;
               h.targetBear = null;
               h.state = 'patrol';
+              sfx.bearDown();
             }
           }
         }
@@ -499,21 +544,34 @@
     save();
   });
 
-  // ---------- Death / respawn ----------
+  // ---------- Death / revive / full reset ----------
   const deathOverlay = document.getElementById('deathOverlay');
   const deathInfo = document.getElementById('deathInfo');
-  const respawnBtn = document.getElementById('respawnBtn');
+  const reviveBtn = document.getElementById('reviveBtn');
+  const giveUpBtn = document.getElementById('giveUpBtn');
+  const restartGameBtn = document.getElementById('restartGameBtn');
+  const confirmOverlay = document.getElementById('confirmOverlay');
+  const confirmYesBtn = document.getElementById('confirmYesBtn');
+  const confirmNoBtn = document.getElementById('confirmNoBtn');
 
   function killPlayer() {
     if (state.dead) return;
     state.dead = true;
+    sfx.death();
+    const cost = reviveCost();
+    const canAfford = state.coins >= cost;
     deathInfo.textContent = state.player.wood > 0
-      ? `Tu as perdu ${state.player.wood} bois transporté.`
-      : `Reste prudent près des ours.`;
+      ? `Tu as perdu ${Math.floor(state.player.wood)} bois transporté.`
+      : `Un ours t'a rattrapé.`;
+    reviveBtn.textContent = `Payer ${cost} 🪙 et revivre`;
+    reviveBtn.disabled = !canAfford;
     deathOverlay.classList.remove('hidden');
   }
 
-  respawnBtn.addEventListener('click', () => {
+  reviveBtn.addEventListener('click', () => {
+    const cost = reviveCost();
+    if (state.coins < cost) return;
+    state.coins -= cost;
     state.player.x = BASE_X;
     state.player.y = BASE_Y - 40;
     state.player.hp = PLAYER_MAX_HP;
@@ -521,7 +579,57 @@
     state.player.invulnerableUntil = performance.now() + 2000;
     state.dead = false;
     deathOverlay.classList.add('hidden');
+    sfx.revive();
+    save();
   });
+
+  function performFullReset() {
+    state.coins = 0;
+    state.stockpile = 0;
+    state.lumberjacks = 0;
+    state.sellers = 0;
+    state.hunters = 0;
+    state.territoryLevel = 0;
+    state.towers = [];
+    state.trees = [];
+    state.bears = [];
+    state.workers = [];
+    state.hunterUnits = [];
+    state.player.x = BASE_X;
+    state.player.y = BASE_Y - 40;
+    state.player.hp = PLAYER_MAX_HP;
+    state.player.wood = 0;
+    state.player.lastHitAt = -999;
+    state.player.invulnerableUntil = 0;
+    state.player.facing = 0;
+    state.chopTarget = null;
+    state.towerPlacementMode = false;
+    state.dead = false;
+    for (let i = 0; i < maxTrees(); i++) spawnTree();
+    for (let i = 0; i < targetBearCount(); i++) spawnBear();
+    localStorage.removeItem('lumberjackSave');
+    save();
+    deathOverlay.classList.add('hidden');
+    shopOverlay.classList.add('hidden');
+    renderShop();
+  }
+
+  let confirmAction = null;
+  function askConfirm(action) {
+    confirmAction = action;
+    confirmOverlay.classList.remove('hidden');
+  }
+  confirmYesBtn.addEventListener('click', () => {
+    confirmOverlay.classList.add('hidden');
+    if (confirmAction) confirmAction();
+  });
+  confirmNoBtn.addEventListener('click', () => {
+    confirmOverlay.classList.add('hidden');
+    confirmAction = null;
+  });
+
+  giveUpBtn.addEventListener('click', () => askConfirm(performFullReset));
+  restartGameBtn.addEventListener('click', () => askConfirm(performFullReset));
 
   // ---------- HUD refs ----------
   const coinsLabel = document.getElementById('coinsLabel');
@@ -532,6 +640,7 @@
   // ---------- Update loop ----------
   let last = performance.now();
   let saveTimer = 0;
+  let lastCoinSoundAt = -999;
 
   function update(dt, now) {
     const p = state.player;
@@ -561,6 +670,7 @@
           t.respawnAt = now + randRange(8000, 15000);
           const gained = Math.floor(randRange(1, 4));
           p.wood = Math.min(p.woodCapacity, p.wood + gained);
+          sfx.harvest();
         }
       }
 
@@ -572,6 +682,7 @@
         const sold = Math.min(p.wood, SELL_RATE * dt);
         p.wood -= sold;
         state.coins += sold * WOOD_PRICE;
+        if (now - lastCoinSoundAt > 350) { lastCoinSoundAt = now; sfx.coin(); }
       }
     }
 
@@ -585,9 +696,10 @@
     ensurePopulation();
     updateWorkers(dt, now);
 
-    // Passive economy
-    if (state.sellers > 0 && state.stockpile > 0) {
-      const sold = Math.min(state.stockpile, state.sellers * 1.0 * dt);
+    // Passive economy: a baseline sale rate always applies, Vendeurs add more on top
+    if (state.stockpile > 0) {
+      const rate = BASE_SELL_RATE + state.sellers * 1.0;
+      const sold = Math.min(state.stockpile, rate * dt);
       state.stockpile -= sold;
       state.coins += sold * WOOD_PRICE;
     }
@@ -609,6 +721,7 @@
             b.alive = false;
             b.respawnAt = now + randRange(4000, 9000);
             state.coins += 2;
+            sfx.bearDown();
           }
         }
       }
@@ -634,6 +747,7 @@
           p.lastHitAt = now;
           const dmg = BEAR_DAMAGE * (1 - hunterDamageReduction());
           p.hp -= dmg;
+          sfx.hit();
           if (p.hp <= 0) { p.hp = 0; killPlayer(); }
         }
       } else {

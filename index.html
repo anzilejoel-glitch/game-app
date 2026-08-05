@@ -38,6 +38,7 @@
         <button id="closeShopBtn" class="icon-btn" aria-label="Fermer">✕</button>
       </div>
       <div id="shopList"></div>
+      <button id="restartGameBtn" class="danger-btn">Recommencer une nouvelle partie</button>
     </div>
   </div>
 
@@ -45,7 +46,17 @@
     <div class="overlay-card">
       <h2>Un ours t'a eu !</h2>
       <p id="deathInfo"></p>
-      <button id="respawnBtn" class="primary-btn">Retour au dépôt</button>
+      <button id="reviveBtn" class="primary-btn">Payer et revivre</button>
+      <button id="giveUpBtn" class="danger-btn">Abandonner la partie</button>
+    </div>
+  </div>
+
+  <div id="confirmOverlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h2>Es-tu sûr ?</h2>
+      <p>Toute la progression sera perdue : pièces, bois, bûcherons, chasseurs, tours et territoire. Cette action est irréversible.</p>
+      <button id="confirmYesBtn" class="danger-btn">Oui, tout perdre</button>
+      <button id="confirmNoBtn" class="primary-btn">Annuler</button>
     </div>
   </div>
 </div>
