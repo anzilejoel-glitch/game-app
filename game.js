@@ -168,6 +168,35 @@
   }
 
   // ---------- Persistence ----------
+  let offlineEarnings = null;
+
+  const OFFLINE_CAP_SECONDS = 4 * 3600; // being away longer than this doesn't earn more
+  const OFFLINE_EFFICIENCY = 0.2; // workers are much slower without supervision
+
+  function simulateOfflineEarnings(elapsedSeconds) {
+    const capped = Math.min(elapsedSeconds, OFFLINE_CAP_SECONDS);
+    if (capped < 20) return null;
+    const lumberRate = state.lumberjacks * 0.3 * OFFLINE_EFFICIENCY;
+    const sellRate = (BASE_SELL_RATE + state.sellers * 1.0) * OFFLINE_EFFICIENCY;
+    let remaining = capped;
+    let logsSold = 0;
+    let coinsEarned = 0;
+    while (remaining > 0) {
+      const step = Math.min(60, remaining);
+      remaining -= step;
+      state.stockpile = Math.min(STOCKPILE_CAP, state.stockpile + lumberRate * step);
+      if (state.stockpile > 0) {
+        const sold = Math.min(state.stockpile, sellRate * step);
+        state.stockpile -= sold;
+        logsSold += sold;
+        state.coins += sold * WOOD_PRICE;
+        coinsEarned += sold * WOOD_PRICE;
+      }
+    }
+    if (coinsEarned < 1) return null;
+    return { seconds: capped, logsSold: Math.round(logsSold), coinsEarned: Math.round(coinsEarned) };
+  }
+
   function save() {
     const data = {
       coins: state.coins,
@@ -179,6 +208,7 @@
       towers: state.towers,
       walls: state.walls,
       doors: state.doors,
+      lastSaveAt: Date.now(),
     };
     localStorage.setItem('lumberjackSave', JSON.stringify(data));
   }
@@ -197,6 +227,10 @@
       state.towers = Array.isArray(data.towers) ? data.towers : [];
       state.walls = Array.isArray(data.walls) ? data.walls : [];
       state.doors = Array.isArray(data.doors) ? data.doors : [];
+      if (data.lastSaveAt) {
+        const elapsedSeconds = (Date.now() - data.lastSaveAt) / 1000;
+        offlineEarnings = simulateOfflineEarnings(elapsedSeconds);
+      }
     } catch (e) { /* ignore corrupt save */ }
   }
 
@@ -644,6 +678,19 @@
   const confirmOverlay = document.getElementById('confirmOverlay');
   const confirmYesBtn = document.getElementById('confirmYesBtn');
   const confirmNoBtn = document.getElementById('confirmNoBtn');
+  const welcomeBackOverlay = document.getElementById('welcomeBackOverlay');
+  const welcomeBackInfo = document.getElementById('welcomeBackInfo');
+  const welcomeBackOkBtn = document.getElementById('welcomeBackOkBtn');
+
+  function formatDuration(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h} h ${m} min`;
+    if (m > 0) return `${m} min`;
+    return `${Math.floor(seconds)} s`;
+  }
+
+  welcomeBackOkBtn.addEventListener('click', () => welcomeBackOverlay.classList.add('hidden'));
 
   function killPlayer() {
     if (state.dead) return;
@@ -1189,6 +1236,11 @@
   for (let i = 0; i < state.lumberjacks; i++) spawnWorker();
   for (let i = 0; i < state.hunters; i++) spawnHunterUnit();
   renderShop();
+
+  if (offlineEarnings) {
+    welcomeBackInfo.textContent = `Pendant ton absence (${formatDuration(offlineEarnings.seconds)}), tes bûcherons ont vendu ${offlineEarnings.logsSold} bois, générant ${offlineEarnings.coinsEarned} 🪙.`;
+    welcomeBackOverlay.classList.remove('hidden');
+  }
 
   window.addEventListener('beforeunload', save);
   document.addEventListener('visibilitychange', () => {
