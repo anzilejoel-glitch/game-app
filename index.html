@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Bûcheron & Ours</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#16281c">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div class="hud-pill">🪙 <span id="coinsLabel">0</span></div>
+    <div class="hud-pill">🪵 <span id="woodLabel">0/10</span></div>
+    <div class="hud-pill hp-pill">
+      <div class="hp-bar-bg"><div id="hpBar" class="hp-bar-fill"></div></div>
+    </div>
+  </div>
+
+  <button id="shopBtn" class="icon-btn top-right" aria-label="Boutique">🛒</button>
+
+  <div id="chopWrap" class="hidden">
+    <button id="chopBtn" class="action-btn">
+      <span>Couper</span>
+      <svg id="chopRing" viewBox="0 0 44 44"><circle cx="22" cy="22" r="19"></circle></svg>
+    </button>
+  </div>
+
+  <div id="sellHint" class="hidden">Vendre au dépôt</div>
+  <div id="towerModeHint" class="hidden">Touche la carte pour placer la tour (Annuler)</div>
+
+  <div id="joystick">
+    <div id="joyBase"><div id="joyStick"></div></div>
+  </div>
+
+  <div id="shopOverlay" class="overlay hidden">
+    <div class="overlay-card">
+      <div class="overlay-header">
+        <h2>Boutique</h2>
+        <button id="closeShopBtn" class="icon-btn" aria-label="Fermer">✕</button>
+      </div>
+      <div id="shopList"></div>
+    </div>
+  </div>
+
+  <div id="deathOverlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h2>Un ours t'a eu !</h2>
+      <p id="deathInfo"></p>
+      <button id="respawnBtn" class="primary-btn">Retour au dépôt</button>
+    </div>
+  </div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>

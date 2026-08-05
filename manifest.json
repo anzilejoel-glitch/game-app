@@ -1,0 +1,9 @@
+{
+  "name": "Bûcheron & Ours",
+  "short_name": "Bûcheron",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#16281c",
+  "theme_color": "#16281c",
+  "orientation": "portrait"
+}
