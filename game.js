@@ -63,6 +63,11 @@
   const WALL_MIN_SEPARATION = 32;
   const POPUP_LIFETIME = 900;
   const SHAKE_DURATION = 250;
+  const GOLDEN_TREE_CHANCE = 0.05;
+  const BEAR_BONUS_CHANCE = 0.15;
+  const CHEST_PICKUP_RADIUS = 36;
+  const CHEST_MIN_INTERVAL = 90000;
+  const CHEST_MAX_INTERVAL = 180000;
 
   function spawnPopup(x, y, text, color) {
     state.popups.push({ x, y, text, color, createdAt: performance.now() });
@@ -128,6 +133,7 @@
     death() { beep(90, 0.5, 'sawtooth', 0.2); vibrate([50, 50, 50]); },
     revive() { beep(520, 0.25, 'sine', 0.15); vibrate(20); },
     bearDown() { beep(740, 0.15, 'triangle', 0.12); },
+    bonus() { beep(700, 0.09, 'square', 0.1); setTimeout(() => beep(1050, 0.14, 'square', 0.1), 90); },
   };
 
   const COSTS = {
@@ -176,7 +182,10 @@
     dead: false,
     popups: [],
     particles: [],
+    chests: [],
   };
+
+  let nextChestAt = 0;
 
   function territoryRadius() {
     return 300 + state.territoryLevel * 150;
@@ -293,7 +302,34 @@
 
   function spawnTree() {
     const pos = randomWorldPos(120);
-    state.trees.push({ x: pos.x, y: pos.y, hp: TREE_MAX_HP, alive: true, respawnAt: 0 });
+    state.trees.push({
+      x: pos.x, y: pos.y, hp: TREE_MAX_HP, alive: true, respawnAt: 0,
+      golden: Math.random() < GOLDEN_TREE_CHANCE,
+    });
+  }
+
+  function bearKillReward(x, y) {
+    let coins = 2;
+    let bonus = false;
+    if (Math.random() < BEAR_BONUS_CHANCE) {
+      coins += Math.round(randRange(10, 25));
+      bonus = true;
+    }
+    state.coins += coins;
+    if (bonus) {
+      spawnPopup(x, y - 20, `+${coins} 🪙 Bonus !`, '#ffd166');
+      sfx.bonus();
+    } else {
+      spawnPopup(x, y - 20, '+2 🪙', '#ffcf5c');
+    }
+  }
+
+  function maybeSpawnChest(now) {
+    if (state.chests.length > 0 || now < nextChestAt) return;
+    const angle = randRange(0, Math.PI * 2);
+    const dist = randRange(150, Math.max(200, territoryRadius()));
+    state.chests.push({ x: BASE_X + Math.cos(angle) * dist, y: BASE_Y + Math.sin(angle) * dist });
+    nextChestAt = now + randRange(CHEST_MIN_INTERVAL, CHEST_MAX_INTERVAL);
   }
 
   function spawnBear() {
@@ -449,11 +485,10 @@
             if (bear.hp <= 0) {
               bear.alive = false;
               bear.respawnAt = now + randRange(4000, 9000);
-              state.coins += 2;
               h.targetBear = null;
               h.state = 'patrol';
               sfx.bearDown();
-              spawnPopup(bear.x, bear.y - 20, '+2 🪙', '#ffcf5c');
+              bearKillReward(bear.x, bear.y);
             }
           }
         }
@@ -778,6 +813,10 @@
     state.chopTarget = null;
     state.placementMode = null;
     state.dead = false;
+    state.chests = [];
+    state.popups = [];
+    state.particles = [];
+    nextChestAt = performance.now() + randRange(15000, 40000);
     for (let i = 0; i < maxTrees(); i++) spawnTree();
     for (let i = 0; i < targetBearCount(); i++) spawnBear();
     localStorage.removeItem('lumberjackSave');
@@ -842,11 +881,21 @@
         if (t.hp <= 0) {
           t.alive = false;
           t.respawnAt = now + randRange(8000, 15000);
-          const gained = Math.floor(randRange(1, 4));
-          p.wood = Math.min(p.woodCapacity, p.wood + gained);
-          sfx.harvest();
-          spawnPopup(t.x, t.y - 30, `+${gained} 🪵`, '#c9a66b');
-          spawnParticles(t.x, t.y - 16, 8, ['#6b4321', '#2e7d42']);
+          if (t.golden) {
+            const gained = Math.round(randRange(8, 15));
+            const bonusCoins = Math.round(randRange(20, 40));
+            p.wood = Math.min(p.woodCapacity, p.wood + gained);
+            state.coins += bonusCoins;
+            sfx.bonus();
+            spawnPopup(t.x, t.y - 30, `✨ +${gained} 🪵 +${bonusCoins} 🪙`, '#ffd166');
+            spawnParticles(t.x, t.y - 16, 14, ['#ffd166', '#f1c40f', '#fff3b0']);
+          } else {
+            const gained = Math.floor(randRange(1, 4));
+            p.wood = Math.min(p.woodCapacity, p.wood + gained);
+            sfx.harvest();
+            spawnPopup(t.x, t.y - 30, `+${gained} 🪵`, '#c9a66b');
+            spawnParticles(t.x, t.y - 16, 8, ['#6b4321', '#2e7d42']);
+          }
         }
       }
 
@@ -859,9 +908,8 @@
         if (b.hp <= 0) {
           b.alive = false;
           b.respawnAt = now + randRange(4000, 9000);
-          state.coins += 2;
           sfx.bearDown();
-          spawnPopup(b.x, b.y - 20, '+2 🪙', '#ffcf5c');
+          bearKillReward(b.x, b.y);
           state.attacking = false;
         }
       }
@@ -883,10 +931,27 @@
       if (!t.alive && now >= t.respawnAt) {
         t.alive = true;
         t.hp = TREE_MAX_HP;
+        t.golden = Math.random() < GOLDEN_TREE_CHANCE;
       }
     }
     ensurePopulation();
     updateWorkers(dt, now);
+
+    // Chests: rare, occasional bonus pickup
+    maybeSpawnChest(now);
+    if (!state.dead) {
+      for (let i = state.chests.length - 1; i >= 0; i--) {
+        const chest = state.chests[i];
+        if (Math.hypot(chest.x - p.x, chest.y - p.y) < CHEST_PICKUP_RADIUS) {
+          const coinsWon = Math.round(randRange(20, 60));
+          state.coins += coinsWon;
+          sfx.bonus();
+          spawnPopup(chest.x, chest.y - 20, `🎁 +${coinsWon} 🪙`, '#ffd166');
+          spawnParticles(chest.x, chest.y - 10, 12, ['#ffd166', '#f1c40f', '#e8b923']);
+          state.chests.splice(i, 1);
+        }
+      }
+    }
 
     // Passive economy: a baseline sale rate always applies, Vendeurs add more on top
     if (state.stockpile > 0) {
@@ -912,9 +977,8 @@
           if (b.hp <= 0) {
             b.alive = false;
             b.respawnAt = now + randRange(4000, 9000);
-            state.coins += 2;
             sfx.bearDown();
-            spawnPopup(b.x, b.y - 20, '+2 🪙', '#ffcf5c');
+            bearKillReward(b.x, b.y);
           }
         }
       }
@@ -1086,10 +1150,17 @@
       if (s.x < -50 || s.x > cssWidth + 50 || s.y < -50 || s.y > cssHeight + 50) continue;
       ctx.fillStyle = '#6b4321';
       ctx.fillRect(s.x - 6, s.y - 8, 12, 26);
-      ctx.fillStyle = '#2e7d42';
+      ctx.fillStyle = t.golden ? '#f1c40f' : '#2e7d42';
       ctx.beginPath();
       ctx.arc(s.x, s.y - 22, TREE_CANOPY_RADIUS, 0, Math.PI * 2);
       ctx.fill();
+      if (t.golden) {
+        ctx.strokeStyle = 'rgba(255, 243, 176, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y - 22, TREE_CANOPY_RADIUS + 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       if (state.chopTarget === t) {
         const ratio = Math.max(0, t.hp / TREE_MAX_HP);
         ctx.strokeStyle = '#ffe066';
@@ -1098,6 +1169,24 @@
         ctx.arc(s.x, s.y - 22, TREE_CANOPY_RADIUS + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - ratio));
         ctx.stroke();
       }
+    }
+
+    // chests
+    for (const chest of state.chests) {
+      const s = worldToScreen(chest.x, chest.y);
+      if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      const pulse = 4 + Math.sin(performance.now() / 250) * 3;
+      ctx.strokeStyle = 'rgba(255, 209, 102, 0.4)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 22 + pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#8d5a2b';
+      ctx.fillRect(s.x - 14, s.y - 8, 28, 16);
+      ctx.fillStyle = '#ffd166';
+      ctx.fillRect(s.x - 14, s.y - 10, 28, 5);
+      ctx.fillStyle = '#e8b923';
+      ctx.fillRect(s.x - 3, s.y - 8, 6, 16);
     }
 
     // workers (hired lumberjacks)
@@ -1287,6 +1376,15 @@
       minimapCtx.fill();
     }
 
+    minimapCtx.fillStyle = '#ffd166';
+    for (const chest of state.chests) {
+      if (Math.hypot(chest.x - state.player.x, chest.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(chest.x, chest.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 3, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
+
     minimapCtx.fillStyle = '#e74c3c';
     for (const b of state.bears) {
       if (!b.alive) continue;
@@ -1320,6 +1418,7 @@
   for (let i = 0; i < targetBearCount(); i++) spawnBear();
   for (let i = 0; i < state.lumberjacks; i++) spawnWorker();
   for (let i = 0; i < state.hunters; i++) spawnHunterUnit();
+  nextChestAt = performance.now() + randRange(15000, 40000);
   renderShop();
 
   if (offlineEarnings) {
