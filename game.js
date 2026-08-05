@@ -47,6 +47,10 @@
   const WORKER_CAPACITY = 3;
   const WORKER_ARRIVE_RANGE = 30;
   const STOCKPILE_CAP = 300;
+  const HUNTER_SPEED = 155;
+  const HUNTER_ATTACK_RANGE = 32;
+  const HUNTER_DPS = 30;
+  const HUNTER_PATROL_RADIUS = 170;
   const MINIMAP_SIZE = 120;
   const MINIMAP_WORLD_RADIUS = 900;
 
@@ -84,6 +88,7 @@
     trees: [],
     bears: [],
     workers: [],
+    hunterUnits: [],
     chopTarget: null,
     towerPlacementMode: false,
     dead: false,
@@ -171,12 +176,26 @@
     });
   }
 
+  function spawnHunterUnit() {
+    const angle = randRange(0, Math.PI * 2);
+    const dist = randRange(20, 50);
+    state.hunterUnits.push({
+      x: BASE_X + Math.cos(angle) * dist,
+      y: BASE_Y + Math.sin(angle) * dist,
+      state: 'patrol',
+      targetBear: null,
+      patrolAngle: angle,
+      patrolChangeAt: 0,
+    });
+  }
+
   function ensurePopulation() {
     while (state.trees.filter(t => t.alive).length < maxTrees() && state.trees.length < maxTrees() + 5) {
       spawnTree();
     }
     while (state.bears.length < targetBearCount()) spawnBear();
     while (state.workers.length < state.lumberjacks) spawnWorker();
+    while (state.hunterUnits.length < state.hunters) spawnHunterUnit();
   }
 
   function nearestAliveTreeFor(x, y) {
@@ -229,6 +248,71 @@
         } else {
           w.x += (dx / d) * WORKER_SPEED * dt;
           w.y += (dy / d) * WORKER_SPEED * dt;
+        }
+      }
+    }
+  }
+
+  function nearestAliveBearWithin(x, y, maxDist) {
+    let best = null, bestDist = Infinity;
+    for (const b of state.bears) {
+      if (!b.alive) continue;
+      const d = Math.hypot(b.x - x, b.y - y);
+      if (d < maxDist && d < bestDist) { best = b; bestDist = d; }
+    }
+    return best;
+  }
+
+  function updateHunterUnits(dt, now) {
+    for (const h of state.hunterUnits) {
+      if (h.state === 'patrol') {
+        if (now >= h.patrolChangeAt) {
+          h.patrolAngle = randRange(0, Math.PI * 2);
+          h.patrolChangeAt = now + randRange(2000, 4500);
+        }
+        const targetX = BASE_X + Math.cos(h.patrolAngle) * HUNTER_PATROL_RADIUS;
+        const targetY = BASE_Y + Math.sin(h.patrolAngle) * HUNTER_PATROL_RADIUS;
+        const dx = targetX - h.x, dy = targetY - h.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 10) {
+          h.x += (dx / d) * HUNTER_SPEED * 0.5 * dt;
+          h.y += (dy / d) * HUNTER_SPEED * 0.5 * dt;
+        }
+        const bear = nearestAliveBearWithin(h.x, h.y, territoryRadius());
+        if (bear) { h.targetBear = bear; h.state = 'chasing'; }
+      } else if (h.state === 'chasing') {
+        if (!h.targetBear || !h.targetBear.alive) {
+          h.targetBear = null;
+          h.state = 'patrol';
+        } else {
+          const dx = h.targetBear.x - h.x, dy = h.targetBear.y - h.y;
+          const d = Math.hypot(dx, dy);
+          if (d < HUNTER_ATTACK_RANGE) {
+            h.state = 'attacking';
+          } else {
+            h.x += (dx / d) * HUNTER_SPEED * dt;
+            h.y += (dy / d) * HUNTER_SPEED * dt;
+          }
+        }
+      } else if (h.state === 'attacking') {
+        const bear = h.targetBear;
+        if (!bear || !bear.alive) {
+          h.targetBear = null;
+          h.state = 'patrol';
+        } else {
+          const d = Math.hypot(bear.x - h.x, bear.y - h.y);
+          if (d > HUNTER_ATTACK_RANGE) {
+            h.state = 'chasing';
+          } else {
+            bear.hp -= HUNTER_DPS * dt;
+            if (bear.hp <= 0) {
+              bear.alive = false;
+              bear.respawnAt = now + randRange(4000, 9000);
+              state.coins += 2;
+              h.targetBear = null;
+              h.state = 'patrol';
+            }
+          }
         }
       }
     }
@@ -330,7 +414,7 @@
     },
     {
       kind: 'hunter', title: 'Chasseur',
-      desc: 'Attaque les ours du territoire, réduit les dégâts subis',
+      desc: 'Patrouille et combat les ours du territoire, réduit les dégâts subis',
       getCount: () => state.hunters,
     },
     {
@@ -380,6 +464,7 @@
     state.coins -= cost;
     state[countKey] += 1;
     if (kind === 'lumberjack') spawnWorker();
+    if (kind === 'hunter') spawnHunterUnit();
     ensurePopulation();
     renderShop();
     save();
@@ -447,8 +532,6 @@
   // ---------- Update loop ----------
   let last = performance.now();
   let saveTimer = 0;
-  let lumberjackTimer = 0;
-  const hunterTimers = [];
 
   function update(dt, now) {
     const p = state.player;
@@ -509,28 +592,7 @@
       state.coins += sold * WOOD_PRICE;
     }
 
-    // Hunters: periodically damage a bear inside territory
-    while (hunterTimers.length < state.hunters) hunterTimers.push(randRange(0, 6000));
-    for (let i = 0; i < state.hunters; i++) {
-      hunterTimers[i] -= dt * 1000;
-      if (hunterTimers[i] <= 0) {
-        hunterTimers[i] = 6000;
-        let target = null, bestDist = Infinity;
-        for (const b of state.bears) {
-          if (!b.alive) continue;
-          const d = Math.hypot(b.x - BASE_X, b.y - BASE_Y);
-          if (d < territoryRadius() && d < bestDist) { target = b; bestDist = d; }
-        }
-        if (target) {
-          target.hp -= 40;
-          if (target.hp <= 0) {
-            target.alive = false;
-            target.respawnAt = now + randRange(4000, 9000);
-            state.coins += 2;
-          }
-        }
-      }
-    }
+    updateHunterUnits(dt, now);
 
     // Towers: damage + repel nearby bears
     for (const tower of state.towers) {
@@ -697,6 +759,25 @@
       }
     }
 
+    // hunter units
+    for (const h of state.hunterUnits) {
+      const s = worldToScreen(h.x, h.y);
+      if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      ctx.fillStyle = h.state === 'attacking' ? '#e74c3c' : '#7f8c8d';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.strokeStyle = '#2c3e50';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(s.x - 8, s.y + 8);
+      ctx.lineTo(s.x + 8, s.y - 8);
+      ctx.stroke();
+    }
+
     // bears
     for (const b of state.bears) {
       if (!b.alive) continue;
@@ -787,6 +868,15 @@
       minimapCtx.fill();
     }
 
+    minimapCtx.fillStyle = '#7f8c8d';
+    for (const h of state.hunterUnits) {
+      if (Math.hypot(h.x - state.player.x, h.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(h.x, h.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 2, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
+
     minimapCtx.fillStyle = '#e74c3c';
     for (const b of state.bears) {
       if (!b.alive) continue;
@@ -819,6 +909,7 @@
   for (let i = 0; i < maxTrees(); i++) spawnTree();
   for (let i = 0; i < targetBearCount(); i++) spawnBear();
   for (let i = 0; i < state.lumberjacks; i++) spawnWorker();
+  for (let i = 0; i < state.hunters; i++) spawnHunterUnit();
   renderShop();
 
   window.addEventListener('beforeunload', save);
