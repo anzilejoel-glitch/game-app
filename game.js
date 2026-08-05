@@ -415,7 +415,10 @@
 
   // Keyboard fallback (desktop testing)
   const keys = {};
-  window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === ' ') e.preventDefault(); // avoid scrolling the page
+    keys[e.key.toLowerCase()] = true;
+  });
   window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
 
   function getMoveVector() {
@@ -700,10 +703,10 @@
         }
       }
 
-      // Attack button: damage the nearest bear in range while held
+      // Attack button (or spacebar): damage the nearest bear in range while held
       state.attackTarget = findNearestBear();
       attackWrap.classList.toggle('hidden', !state.attackTarget);
-      if (state.attacking && state.attackTarget && state.attackTarget.alive) {
+      if ((state.attacking || keys[' ']) && state.attackTarget && state.attackTarget.alive) {
         const b = state.attackTarget;
         b.hp -= PLAYER_ATTACK_DPS * dt;
         if (b.hp <= 0) {
