@@ -61,6 +61,35 @@
   const NPC_RADIUS = 12;
   const WALL_RADIUS = 20;
   const WALL_MIN_SEPARATION = 32;
+  const POPUP_LIFETIME = 900;
+  const SHAKE_DURATION = 250;
+
+  function spawnPopup(x, y, text, color) {
+    state.popups.push({ x, y, text, color, createdAt: performance.now() });
+  }
+
+  function spawnParticles(x, y, count, colors) {
+    for (let i = 0; i < count; i++) {
+      const angle = randRange(0, Math.PI * 2);
+      const speed = randRange(40, 120);
+      state.particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 40,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        size: randRange(3, 6),
+        createdAt: performance.now(),
+        life: randRange(400, 700),
+      });
+    }
+  }
+
+  let shakeUntil = 0;
+  let shakeMagnitude = 0;
+  function triggerShake(magnitude) {
+    shakeUntil = performance.now() + SHAKE_DURATION;
+    shakeMagnitude = magnitude;
+  }
 
   // ---------- Sound & haptics ----------
   let audioCtx = null;
@@ -145,6 +174,8 @@
     attackTarget: null,
     placementMode: null, // null | 'tower' | 'wall' | 'door'
     dead: false,
+    popups: [],
+    particles: [],
   };
 
   function territoryRadius() {
@@ -422,6 +453,7 @@
               h.targetBear = null;
               h.state = 'patrol';
               sfx.bearDown();
+              spawnPopup(bear.x, bear.y - 20, '+2 🪙', '#ffcf5c');
             }
           }
         }
@@ -696,6 +728,7 @@
     if (state.dead) return;
     state.dead = true;
     sfx.death();
+    triggerShake(12);
     const cost = reviveCost();
     const canAfford = state.coins >= cost;
     deathInfo.textContent = state.player.wood > 0
@@ -812,6 +845,8 @@
           const gained = Math.floor(randRange(1, 4));
           p.wood = Math.min(p.woodCapacity, p.wood + gained);
           sfx.harvest();
+          spawnPopup(t.x, t.y - 30, `+${gained} 🪵`, '#c9a66b');
+          spawnParticles(t.x, t.y - 16, 8, ['#6b4321', '#2e7d42']);
         }
       }
 
@@ -826,6 +861,7 @@
           b.respawnAt = now + randRange(4000, 9000);
           state.coins += 2;
           sfx.bearDown();
+          spawnPopup(b.x, b.y - 20, '+2 🪙', '#ffcf5c');
           state.attacking = false;
         }
       }
@@ -878,6 +914,7 @@
             b.respawnAt = now + randRange(4000, 9000);
             state.coins += 2;
             sfx.bearDown();
+            spawnPopup(b.x, b.y - 20, '+2 🪙', '#ffcf5c');
           }
         }
       }
@@ -904,6 +941,8 @@
           const dmg = BEAR_DAMAGE * (1 - hunterDamageReduction());
           p.hp -= dmg;
           sfx.hit();
+          spawnPopup(p.x, p.y - 20, `-${Math.round(dmg)}`, '#e74c3c');
+          triggerShake(6);
           if (p.hp <= 0) { p.hp = 0; killPlayer(); }
         }
       } else {
@@ -918,6 +957,15 @@
       b.x = Math.max(20, Math.min(WORLD_SIZE - 20, b.x));
       b.y = Math.max(20, Math.min(WORLD_SIZE - 20, b.y));
       resolveWallCollision(b, BEAR_RADIUS, true);
+    }
+
+    // Popups & particles
+    state.popups = state.popups.filter(p => now - p.createdAt < POPUP_LIFETIME);
+    state.particles = state.particles.filter(pt => now - pt.createdAt < pt.life);
+    for (const pt of state.particles) {
+      pt.x += pt.vx * dt;
+      pt.y += pt.vy * dt;
+      pt.vy += 220 * dt; // gravity
     }
 
     // HUD
@@ -935,8 +983,18 @@
   }
 
   function draw() {
+    let shakeX = 0, shakeY = 0;
+    const now = performance.now();
+    if (now < shakeUntil) {
+      const power = shakeMagnitude * ((shakeUntil - now) / SHAKE_DURATION);
+      shakeX = (Math.random() * 2 - 1) * power;
+      shakeY = (Math.random() * 2 - 1) * power;
+    }
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
     ctx.fillStyle = '#1c3320';
-    ctx.fillRect(0, 0, cssWidth, cssHeight);
+    ctx.fillRect(-20, -20, cssWidth + 40, cssHeight + 40);
 
     // subtle ground dots
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
@@ -1125,6 +1183,33 @@
       ctx.globalAlpha = 1;
     }
 
+    // particles
+    for (const pt of state.particles) {
+      const s = worldToScreen(pt.x, pt.y);
+      const age = performance.now() - pt.createdAt;
+      const alpha = Math.max(0, 1 - age / pt.life);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = pt.color;
+      ctx.fillRect(s.x - pt.size / 2, s.y - pt.size / 2, pt.size, pt.size);
+    }
+    ctx.globalAlpha = 1;
+
+    // popups
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 15px sans-serif';
+    for (const popup of state.popups) {
+      const age = performance.now() - popup.createdAt;
+      const ratio = age / POPUP_LIFETIME;
+      const s = worldToScreen(popup.x, popup.y - ratio * 40);
+      ctx.globalAlpha = Math.max(0, 1 - ratio);
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText(popup.text, s.x + 1, s.y + 1);
+      ctx.fillStyle = popup.color;
+      ctx.fillText(popup.text, s.x, s.y);
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
     renderMinimap();
   }
 
