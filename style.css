@@ -133,7 +133,7 @@ html, body {
   background: rgba(231, 76, 60, 1);
 }
 
-#sellHint, #towerModeHint {
+#sellHint, #towerModeHint, #starvationHint {
   position: absolute;
   bottom: calc(150px + env(safe-area-inset-bottom));
   left: 50%;
@@ -144,6 +144,16 @@ html, body {
   font-size: 0.9rem;
   z-index: 5;
   white-space: nowrap;
+}
+
+#starvationHint {
+  background: rgba(231, 76, 60, 0.85);
+  animation: starvation-pulse 1s ease-in-out infinite;
+}
+
+@keyframes starvation-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 #towerModeHint {
@@ -256,6 +266,13 @@ html, body {
 
 .danger-btn:active {
   background: rgba(231, 76, 60, 0.28);
+}
+
+.population-info {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ffd166;
+  padding: 2px 4px 10px;
 }
 
 .shop-item {

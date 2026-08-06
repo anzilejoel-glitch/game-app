@@ -51,6 +51,11 @@
   const STOCKPILE_CAP = 300;
   const PLANK_RATE = 1.0; // wood/s converted per sawmill
   const WOOD_PER_PLANK = 2;
+  const BASE_POPULATION_CAPACITY = 6;
+  const HOUSE_CAPACITY = 3;
+  const FOOD_CONSUMPTION_RATE = 0.04; // meat/s consumed per villager
+  const STARVATION_INTERVAL = 25000; // ms with 0 meat before a villager leaves
+  const HOUSE_MIN_SEPARATION = 70;
   const HUNTER_SPEED = 155;
   const HUNTER_ATTACK_RANGE = 32;
   const HUNTER_DPS = 30;
@@ -157,6 +162,7 @@
     wall: { base: 15, growth: 1.08 },
     door: { base: 25, growth: 1.1 },
     sawmill: { base: 40, growth: 1.18 },
+    house: { base: 30, growth: 1.25 }, // paid in wood, not coins
   };
 
   function costOf(kind, count) {
@@ -179,6 +185,7 @@
     towers: [],
     walls: [],
     doors: [],
+    houses: [],
     player: {
       x: BASE_X, y: BASE_Y - 40,
       hp: PLAYER_MAX_HP,
@@ -256,6 +263,14 @@
     return Math.round(40 + state.territoryLevel * 25);
   }
 
+  function totalPopulation() {
+    return state.lumberjacks + state.sellers + state.sawmills + state.hunters;
+  }
+
+  function populationCapacity() {
+    return BASE_POPULATION_CAPACITY + state.houses.length * HOUSE_CAPACITY;
+  }
+
   function hunterDamageReduction() {
     return Math.min(0.5, state.hunters * 0.05);
   }
@@ -294,6 +309,7 @@
       towers: state.towers,
       walls: state.walls,
       doors: state.doors,
+      houses: state.houses,
       stats: state.stats,
       unlockedAchievements: state.unlockedAchievements,
       lastSaveAt: Date.now(),
@@ -319,6 +335,7 @@
       state.towers = Array.isArray(data.towers) ? data.towers : [];
       state.walls = Array.isArray(data.walls) ? data.walls : [];
       state.doors = Array.isArray(data.doors) ? data.doors : [];
+      state.houses = Array.isArray(data.houses) ? data.houses : [];
       state.stats = data.stats && typeof data.stats === 'object'
         ? { treesChopped: data.stats.treesChopped || 0, bearsKilled: data.stats.bearsKilled || 0 }
         : { treesChopped: 0, bearsKilled: 0 };
@@ -712,22 +729,27 @@
     {
       kind: 'lumberjack', title: 'Bûcheron',
       desc: 'Coupe des arbres et ramène le bois au dépôt',
-      getCount: () => state.lumberjacks,
+      getCount: () => state.lumberjacks, needsCapacity: true,
     },
     {
       kind: 'seller', title: 'Vendeur',
       desc: '+1.0 bois/s converti en pièces',
-      getCount: () => state.sellers,
+      getCount: () => state.sellers, needsCapacity: true,
     },
     {
       kind: 'sawmill', title: 'Scierie',
       desc: 'Transforme le bois du stock en planches (2 bois = 1 planche)',
-      getCount: () => state.sawmills,
+      getCount: () => state.sawmills, needsCapacity: true,
     },
     {
       kind: 'hunter', title: 'Chasseur',
       desc: 'Patrouille et combat les bêtes sauvages du territoire, réduit les dégâts subis',
-      getCount: () => state.hunters,
+      getCount: () => state.hunters, needsCapacity: true,
+    },
+    {
+      kind: 'house', title: 'Maison',
+      desc: '+3 places pour des habitants (placement sur la carte, payé en bois)',
+      getCount: () => state.houses.length, currency: 'wood',
     },
     {
       kind: 'tower', title: 'Tour de guet',
@@ -751,26 +773,32 @@
     },
   ];
 
-  const PLACEMENT_HINTS = {
-    tower: 'Touche la carte pour placer la tour (Annuler)',
-    wall: 'Touche la carte pour placer un mur (Annuler)',
-    door: 'Touche la carte pour placer une porte (Annuler)',
+  const PLACEMENT_INFO = {
+    tower: { hint: 'Touche la carte pour placer la tour (Annuler)', array: () => state.towers },
+    wall: { hint: 'Touche la carte pour placer un mur (Annuler)', array: () => state.walls },
+    door: { hint: 'Touche la carte pour placer une porte (Annuler)', array: () => state.doors },
+    house: { hint: 'Touche la carte pour placer la maison (Annuler)', array: () => state.houses },
   };
 
   function renderShop() {
+    const popInfo = document.getElementById('populationInfo');
+    if (popInfo) popInfo.textContent = `Population : ${totalPopulation()} / ${populationCapacity()}`;
     shopList.innerHTML = '';
     for (const item of SHOP_ITEMS) {
       const count = item.getCount();
       const cost = costOf(item.kind, count);
+      const currency = item.currency === 'wood' ? '🪵' : '🪙';
+      const balance = item.currency === 'wood' ? state.stockpile : state.coins;
+      const atCapacity = item.needsCapacity && totalPopulation() >= populationCapacity();
       const row = document.createElement('div');
       row.className = 'shop-item';
       row.innerHTML = `
         <div class="shop-item-info">
           <div class="shop-item-title">${item.title}</div>
           <div class="shop-item-desc">${item.desc}</div>
-          <div class="shop-item-count">Possédé : ${count}</div>
+          <div class="shop-item-count">Possédé : ${count}${atCapacity ? ' — population au maximum' : ''}</div>
         </div>
-        <button class="buy-btn" ${state.coins < cost ? 'disabled' : ''}>${cost} 🪙</button>
+        <button class="buy-btn" ${balance < cost || atCapacity ? 'disabled' : ''}>${cost} ${currency}</button>
       `;
       row.querySelector('.buy-btn').addEventListener('click', () => buyItem(item.kind));
       shopList.appendChild(row);
@@ -778,16 +806,19 @@
   }
 
   function buyItem(kind) {
-    if (PLACEMENT_HINTS[kind]) {
-      const arr = kind === 'tower' ? state.towers : kind === 'wall' ? state.walls : state.doors;
-      const cost = costOf(kind, arr.length);
-      if (state.coins < cost) return;
+    if (PLACEMENT_INFO[kind]) {
+      const info = PLACEMENT_INFO[kind];
+      const cost = costOf(kind, info.array().length);
+      const balance = kind === 'house' ? state.stockpile : state.coins;
+      if (balance < cost) return;
       shopOverlay.classList.add('hidden');
       state.placementMode = kind;
-      towerModeHint.textContent = PLACEMENT_HINTS[kind];
+      towerModeHint.textContent = info.hint;
       towerModeHint.classList.remove('hidden');
       return;
     }
+    const needsCapacity = SHOP_ITEMS.find(i => i.kind === kind)?.needsCapacity;
+    if (needsCapacity && totalPopulation() >= populationCapacity()) return;
     const countKey = kind === 'territory' ? 'territoryLevel' : kind + 's';
     const cost = costOf(kind, state[countKey]);
     if (state.coins < cost) return;
@@ -839,7 +870,7 @@
     towerModeHint.classList.add('hidden');
   });
 
-  // ---------- Canvas tap: place tower / wall / door ----------
+  // ---------- Canvas tap: place tower / wall / door / house ----------
   canvas.addEventListener('pointerdown', (e) => {
     const mode = state.placementMode;
     if (!mode) return;
@@ -855,7 +886,7 @@
       if (state.coins < cost) return;
       state.coins -= cost;
       state.towers.push({ x: worldX, y: worldY });
-    } else {
+    } else if (mode === 'wall' || mode === 'door') {
       if (distFromBase > territoryRadius() + 40 || distFromBase < 60) return;
       const combined = state.walls.concat(state.doors);
       const tooClose = combined.some(o => Math.hypot(o.x - worldX, o.y - worldY) < WALL_MIN_SEPARATION);
@@ -865,6 +896,14 @@
       if (state.coins < cost) return;
       state.coins -= cost;
       arr.push({ x: worldX, y: worldY });
+    } else if (mode === 'house') {
+      if (distFromBase > territoryRadius() || distFromBase < 90) return;
+      const tooClose = state.houses.some(h => Math.hypot(h.x - worldX, h.y - worldY) < HOUSE_MIN_SEPARATION);
+      if (tooClose) return;
+      const cost = costOf('house', state.houses.length);
+      if (state.stockpile < cost) return;
+      state.stockpile -= cost;
+      state.houses.push({ x: worldX, y: worldY });
     }
 
     state.placementMode = null;
@@ -939,6 +978,7 @@
     state.towers = [];
     state.walls = [];
     state.doors = [];
+    state.houses = [];
     state.trees = [];
     state.bears = [];
     state.hostiles = [];
@@ -960,6 +1000,7 @@
     state.particles = [];
     state.stats = { treesChopped: 0, bearsKilled: 0 };
     state.unlockedAchievements = [];
+    starvationTimer = 0;
     nextChestAt = performance.now() + randRange(15000, 40000);
     for (let i = 0; i < maxTrees(); i++) spawnTree();
     for (let i = 0; i < targetBearCount(); i++) spawnBear();
@@ -995,13 +1036,34 @@
   const meatLabel = document.getElementById('meatLabel');
   const leatherLabel = document.getElementById('leatherLabel');
   const plankLabel = document.getElementById('plankLabel');
+  const populationLabel = document.getElementById('populationLabel');
   const hpBar = document.getElementById('hpBar');
   const sellHint = document.getElementById('sellHint');
+  const starvationHint = document.getElementById('starvationHint');
 
   // ---------- Update loop ----------
   let last = performance.now();
   let saveTimer = 0;
   let lastCoinSoundAt = -999;
+  let starvationTimer = 0;
+
+  function loseRandomVillager() {
+    const types = [];
+    if (state.lumberjacks > 0) types.push('lumberjack');
+    if (state.sellers > 0) types.push('seller');
+    if (state.sawmills > 0) types.push('sawmill');
+    if (state.hunters > 0) types.push('hunter');
+    if (types.length === 0) return;
+    const kind = types[Math.floor(Math.random() * types.length)];
+    const labels = { lumberjack: 'Bûcheron', seller: 'Vendeur', sawmill: 'Ouvrier de scierie', hunter: 'Chasseur' };
+    if (kind === 'lumberjack') { state.lumberjacks--; state.workers.pop(); }
+    else if (kind === 'hunter') { state.hunters--; state.hunterUnits.pop(); }
+    else if (kind === 'seller') { state.sellers--; }
+    else if (kind === 'sawmill') { state.sawmills--; }
+    sfx.death();
+    spawnPopup(BASE_X, BASE_Y - 60, `😢 ${labels[kind]} est parti (faim)`, '#e74c3c');
+    save();
+  }
 
   function update(dt, now) {
     const p = state.player;
@@ -1114,6 +1176,24 @@
       state.stockpile -= consumed;
       state.planks += consumed / WOOD_PER_PLANK;
     }
+
+    // Villagers eat meat; if it runs out for too long, one leaves for good
+    const pop = totalPopulation();
+    if (pop > 0) {
+      state.meat = Math.max(0, state.meat - pop * FOOD_CONSUMPTION_RATE * dt);
+      if (state.meat <= 0) {
+        starvationTimer += dt * 1000;
+        if (starvationTimer >= STARVATION_INTERVAL) {
+          starvationTimer = 0;
+          loseRandomVillager();
+        }
+      } else {
+        starvationTimer = 0;
+      }
+    } else {
+      starvationTimer = 0;
+    }
+    starvationHint.classList.toggle('hidden', !(pop > 0 && state.meat <= 0));
 
     updateHunterUnits(dt, now);
 
@@ -1252,6 +1332,7 @@
     meatLabel.textContent = Math.floor(state.meat);
     leatherLabel.textContent = Math.floor(state.leather);
     plankLabel.textContent = Math.floor(state.planks);
+    populationLabel.textContent = `${totalPopulation()}/${populationCapacity()}`;
     hpBar.style.width = `${Math.max(0, (p.hp / PLAYER_MAX_HP) * 100)}%`;
 
     saveTimer += dt;
@@ -1311,6 +1392,23 @@
     ctx.lineTo(baseScreen.x + 32, baseScreen.y - 20);
     ctx.closePath();
     ctx.fill();
+
+    // houses
+    for (const house of state.houses) {
+      const s = worldToScreen(house.x, house.y);
+      if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      ctx.fillStyle = '#a9764f';
+      ctx.fillRect(s.x - 18, s.y - 12, 36, 26);
+      ctx.fillStyle = '#6b4a2f';
+      ctx.beginPath();
+      ctx.moveTo(s.x - 22, s.y - 12);
+      ctx.lineTo(s.x, s.y - 32);
+      ctx.lineTo(s.x + 22, s.y - 12);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#3d2b1f';
+      ctx.fillRect(s.x - 5, s.y, 10, 14);
+    }
 
     // towers
     for (const tower of state.towers) {
@@ -1665,6 +1763,15 @@
     minimapCtx.beginPath();
     minimapCtx.arc(baseM.x, baseM.y, 4, 0, Math.PI * 2);
     minimapCtx.fill();
+
+    minimapCtx.fillStyle = '#a9764f';
+    for (const house of state.houses) {
+      if (Math.hypot(house.x - state.player.x, house.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(house.x, house.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 2.2, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
 
     minimapCtx.fillStyle = '#2e7d42';
     for (const t of state.trees) {
