@@ -256,31 +256,20 @@
   // ---------- Persistence ----------
   let offlineEarnings = null;
 
-  const OFFLINE_CAP_SECONDS = 4 * 3600; // being away longer than this doesn't earn more
-  const OFFLINE_EFFICIENCY = 0.2; // workers are much slower without supervision
+  const OFFLINE_CAP_SECONDS = 4 * 3600; // being away longer than this doesn't fill more
+  const OFFLINE_EFFICIENCY = 0.5; // workers are slower without supervision
 
+  // Offline time only tops up the wood stockpile (capped like in-game) - no coins are
+  // granted directly, so you still have to come back and sell to cash it in.
   function simulateOfflineEarnings(elapsedSeconds) {
     const capped = Math.min(elapsedSeconds, OFFLINE_CAP_SECONDS);
-    if (capped < 20) return null;
+    if (capped < 20 || state.lumberjacks === 0) return null;
     const lumberRate = state.lumberjacks * 0.3 * OFFLINE_EFFICIENCY;
-    const sellRate = (BASE_SELL_RATE + state.sellers * 1.0) * OFFLINE_EFFICIENCY;
-    let remaining = capped;
-    let logsSold = 0;
-    let coinsEarned = 0;
-    while (remaining > 0) {
-      const step = Math.min(60, remaining);
-      remaining -= step;
-      state.stockpile = Math.min(STOCKPILE_CAP, state.stockpile + lumberRate * step);
-      if (state.stockpile > 0) {
-        const sold = Math.min(state.stockpile, sellRate * step);
-        state.stockpile -= sold;
-        logsSold += sold;
-        state.coins += sold * WOOD_PRICE;
-        coinsEarned += sold * WOOD_PRICE;
-      }
-    }
-    if (coinsEarned < 1) return null;
-    return { seconds: capped, logsSold: Math.round(logsSold), coinsEarned: Math.round(coinsEarned) };
+    const before = state.stockpile;
+    state.stockpile = Math.min(STOCKPILE_CAP, state.stockpile + lumberRate * capped);
+    const woodGained = state.stockpile - before;
+    if (woodGained < 1) return null;
+    return { seconds: capped, woodGained: Math.round(woodGained) };
   }
 
   function save() {
@@ -1764,7 +1753,7 @@
   renderShop();
 
   if (offlineEarnings) {
-    welcomeBackInfo.textContent = `Pendant ton absence (${formatDuration(offlineEarnings.seconds)}), tes bûcherons ont vendu ${offlineEarnings.logsSold} bois, générant ${offlineEarnings.coinsEarned} 🪙.`;
+    welcomeBackInfo.textContent = `Pendant ton absence (${formatDuration(offlineEarnings.seconds)}), tes bûcherons ont ajouté ${offlineEarnings.woodGained} bois au stock. Vends-le au dépôt !`;
     welcomeBackOverlay.classList.remove('hidden');
   }
 
