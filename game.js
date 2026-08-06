@@ -49,6 +49,8 @@
   const WORKER_CAPACITY = 3;
   const WORKER_ARRIVE_RANGE = 30;
   const STOCKPILE_CAP = 300;
+  const PLANK_RATE = 1.0; // wood/s converted per sawmill
+  const WOOD_PER_PLANK = 2;
   const HUNTER_SPEED = 155;
   const HUNTER_ATTACK_RANGE = 32;
   const HUNTER_DPS = 30;
@@ -154,6 +156,7 @@
     territory: { base: 120, growth: 1.4 },
     wall: { base: 15, growth: 1.08 },
     door: { base: 25, growth: 1.1 },
+    sawmill: { base: 40, growth: 1.18 },
   };
 
   function costOf(kind, count) {
@@ -167,8 +170,10 @@
     stockpile: 0,
     meat: 0,
     leather: 0,
+    planks: 0,
     lumberjacks: 0,
     sellers: 0,
+    sawmills: 0,
     hunters: 0,
     territoryLevel: 0,
     towers: [],
@@ -215,6 +220,8 @@
     { id: 'lumberjack10', title: 'Petite entreprise', desc: 'Employer 10 bûcherons', reward: 100, check: () => state.lumberjacks >= 10 },
     { id: 'hunter10', title: 'Milice', desc: 'Employer 10 chasseurs', reward: 100, check: () => state.hunters >= 10 },
     { id: 'wall20', title: 'Forteresse', desc: 'Construire 20 murs', reward: 80, check: () => state.walls.length >= 20 },
+    { id: 'planks50', title: 'Charpentier', desc: 'Avoir 50 planches en stock', reward: 40, check: () => state.planks >= 50 },
+    { id: 'sawmill5', title: 'Industrie du bois', desc: 'Construire 5 scieries', reward: 60, check: () => state.sawmills >= 5 },
   ];
 
   function checkAchievements() {
@@ -278,8 +285,10 @@
       stockpile: state.stockpile,
       meat: state.meat,
       leather: state.leather,
+      planks: state.planks,
       lumberjacks: state.lumberjacks,
       sellers: state.sellers,
+      sawmills: state.sawmills,
       hunters: state.hunters,
       territoryLevel: state.territoryLevel,
       towers: state.towers,
@@ -301,8 +310,10 @@
       state.stockpile = data.stockpile || 0;
       state.meat = data.meat || 0;
       state.leather = data.leather || 0;
+      state.planks = data.planks || 0;
       state.lumberjacks = data.lumberjacks || 0;
       state.sellers = data.sellers || 0;
+      state.sawmills = data.sawmills || 0;
       state.hunters = data.hunters || 0;
       state.territoryLevel = data.territoryLevel || 0;
       state.towers = Array.isArray(data.towers) ? data.towers : [];
@@ -709,6 +720,11 @@
       getCount: () => state.sellers,
     },
     {
+      kind: 'sawmill', title: 'Scierie',
+      desc: 'Transforme le bois du stock en planches (2 bois = 1 planche)',
+      getCount: () => state.sawmills,
+    },
+    {
       kind: 'hunter', title: 'Chasseur',
       desc: 'Patrouille et combat les bêtes sauvages du territoire, réduit les dégâts subis',
       getCount: () => state.hunters,
@@ -914,8 +930,10 @@
     state.stockpile = 0;
     state.meat = 0;
     state.leather = 0;
+    state.planks = 0;
     state.lumberjacks = 0;
     state.sellers = 0;
+    state.sawmills = 0;
     state.hunters = 0;
     state.territoryLevel = 0;
     state.towers = [];
@@ -976,6 +994,7 @@
   const woodLabel = document.getElementById('woodLabel');
   const meatLabel = document.getElementById('meatLabel');
   const leatherLabel = document.getElementById('leatherLabel');
+  const plankLabel = document.getElementById('plankLabel');
   const hpBar = document.getElementById('hpBar');
   const sellHint = document.getElementById('sellHint');
 
@@ -1087,6 +1106,13 @@
       const sold = Math.min(state.stockpile, rate * dt);
       state.stockpile -= sold;
       state.coins += sold * WOOD_PRICE;
+    }
+
+    // Sawmills: convert stockpiled wood into planks
+    if (state.sawmills > 0 && state.stockpile > 0) {
+      const consumed = Math.min(state.stockpile, state.sawmills * PLANK_RATE * dt);
+      state.stockpile -= consumed;
+      state.planks += consumed / WOOD_PER_PLANK;
     }
 
     updateHunterUnits(dt, now);
@@ -1225,6 +1251,7 @@
     woodLabel.textContent = `${Math.floor(p.wood)}/${p.woodCapacity}`;
     meatLabel.textContent = Math.floor(state.meat);
     leatherLabel.textContent = Math.floor(state.leather);
+    plankLabel.textContent = Math.floor(state.planks);
     hpBar.style.width = `${Math.max(0, (p.hp / PLAYER_MAX_HP) * 100)}%`;
 
     saveTimer += dt;
