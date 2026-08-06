@@ -179,12 +179,12 @@
     planks: 0,
     lumberjacks: 0,
     sellers: 0,
-    sawmills: 0,
     hunters: 0,
     territoryLevel: 0,
     towers: [],
     walls: [],
     doors: [],
+    sawmills: [],
     houses: [],
     player: {
       x: BASE_X, y: BASE_Y - 40,
@@ -228,7 +228,7 @@
     { id: 'hunter10', title: 'Milice', desc: 'Employer 10 chasseurs', reward: 100, check: () => state.hunters >= 10 },
     { id: 'wall20', title: 'Forteresse', desc: 'Construire 20 murs', reward: 80, check: () => state.walls.length >= 20 },
     { id: 'planks50', title: 'Charpentier', desc: 'Avoir 50 planches en stock', reward: 40, check: () => state.planks >= 50 },
-    { id: 'sawmill5', title: 'Industrie du bois', desc: 'Construire 5 scieries', reward: 60, check: () => state.sawmills >= 5 },
+    { id: 'sawmill5', title: 'Industrie du bois', desc: 'Construire 5 scieries', reward: 60, check: () => state.sawmills.length >= 5 },
   ];
 
   function checkAchievements() {
@@ -264,7 +264,7 @@
   }
 
   function totalPopulation() {
-    return state.lumberjacks + state.sellers + state.sawmills + state.hunters;
+    return state.lumberjacks + state.sellers + state.sawmills.length + state.hunters;
   }
 
   function populationCapacity() {
@@ -329,7 +329,7 @@
       state.planks = data.planks || 0;
       state.lumberjacks = data.lumberjacks || 0;
       state.sellers = data.sellers || 0;
-      state.sawmills = data.sawmills || 0;
+      state.sawmills = Array.isArray(data.sawmills) ? data.sawmills : [];
       state.hunters = data.hunters || 0;
       state.territoryLevel = data.territoryLevel || 0;
       state.towers = Array.isArray(data.towers) ? data.towers : [];
@@ -737,14 +737,14 @@
       getCount: () => state.sellers, needsCapacity: true,
     },
     {
-      kind: 'sawmill', title: 'Scierie',
-      desc: 'Transforme le bois du stock en planches (2 bois = 1 planche)',
-      getCount: () => state.sawmills, needsCapacity: true,
-    },
-    {
       kind: 'hunter', title: 'Chasseur',
       desc: 'Patrouille et combat les bêtes sauvages du territoire, réduit les dégâts subis',
       getCount: () => state.hunters, needsCapacity: true,
+    },
+    {
+      kind: 'sawmill', title: 'Scierie',
+      desc: 'Transforme le bois du stock en planches (2 bois = 1 planche) - placement sur la carte',
+      getCount: () => state.sawmills.length, needsCapacity: true,
     },
     {
       kind: 'house', title: 'Maison',
@@ -778,6 +778,7 @@
     wall: { hint: 'Touche la carte pour placer un mur (Annuler)', array: () => state.walls },
     door: { hint: 'Touche la carte pour placer une porte (Annuler)', array: () => state.doors },
     house: { hint: 'Touche la carte pour placer la maison (Annuler)', array: () => state.houses },
+    sawmill: { hint: 'Touche la carte pour placer la scierie (Annuler)', array: () => state.sawmills },
   };
 
   function renderShop() {
@@ -806,6 +807,9 @@
   }
 
   function buyItem(kind) {
+    const needsCapacity = SHOP_ITEMS.find(i => i.kind === kind)?.needsCapacity;
+    if (needsCapacity && totalPopulation() >= populationCapacity()) return;
+
     if (PLACEMENT_INFO[kind]) {
       const info = PLACEMENT_INFO[kind];
       const cost = costOf(kind, info.array().length);
@@ -817,8 +821,6 @@
       towerModeHint.classList.remove('hidden');
       return;
     }
-    const needsCapacity = SHOP_ITEMS.find(i => i.kind === kind)?.needsCapacity;
-    if (needsCapacity && totalPopulation() >= populationCapacity()) return;
     const countKey = kind === 'territory' ? 'territoryLevel' : kind + 's';
     const cost = costOf(kind, state[countKey]);
     if (state.coins < cost) return;
@@ -904,6 +906,15 @@
       if (state.stockpile < cost) return;
       state.stockpile -= cost;
       state.houses.push({ x: worldX, y: worldY });
+    } else if (mode === 'sawmill') {
+      if (distFromBase > territoryRadius() || distFromBase < 90) return;
+      if (totalPopulation() >= populationCapacity()) return;
+      const tooClose = state.sawmills.some(s => Math.hypot(s.x - worldX, s.y - worldY) < 70);
+      if (tooClose) return;
+      const cost = costOf('sawmill', state.sawmills.length);
+      if (state.coins < cost) return;
+      state.coins -= cost;
+      state.sawmills.push({ x: worldX, y: worldY });
     }
 
     state.placementMode = null;
@@ -972,12 +983,12 @@
     state.planks = 0;
     state.lumberjacks = 0;
     state.sellers = 0;
-    state.sawmills = 0;
     state.hunters = 0;
     state.territoryLevel = 0;
     state.towers = [];
     state.walls = [];
     state.doors = [];
+    state.sawmills = [];
     state.houses = [];
     state.trees = [];
     state.bears = [];
@@ -1051,15 +1062,15 @@
     const types = [];
     if (state.lumberjacks > 0) types.push('lumberjack');
     if (state.sellers > 0) types.push('seller');
-    if (state.sawmills > 0) types.push('sawmill');
+    if (state.sawmills.length > 0) types.push('sawmill');
     if (state.hunters > 0) types.push('hunter');
     if (types.length === 0) return;
     const kind = types[Math.floor(Math.random() * types.length)];
-    const labels = { lumberjack: 'Bûcheron', seller: 'Vendeur', sawmill: 'Ouvrier de scierie', hunter: 'Chasseur' };
+    const labels = { lumberjack: 'Bûcheron', seller: 'Vendeur', sawmill: 'Scierie', hunter: 'Chasseur' };
     if (kind === 'lumberjack') { state.lumberjacks--; state.workers.pop(); }
     else if (kind === 'hunter') { state.hunters--; state.hunterUnits.pop(); }
     else if (kind === 'seller') { state.sellers--; }
-    else if (kind === 'sawmill') { state.sawmills--; }
+    else if (kind === 'sawmill') { state.sawmills.pop(); }
     sfx.death();
     spawnPopup(BASE_X, BASE_Y - 60, `😢 ${labels[kind]} est parti (faim)`, '#e74c3c');
     save();
@@ -1171,8 +1182,8 @@
     }
 
     // Sawmills: convert stockpiled wood into planks
-    if (state.sawmills > 0 && state.stockpile > 0) {
-      const consumed = Math.min(state.stockpile, state.sawmills * PLANK_RATE * dt);
+    if (state.sawmills.length > 0 && state.stockpile > 0) {
+      const consumed = Math.min(state.stockpile, state.sawmills.length * PLANK_RATE * dt);
       state.stockpile -= consumed;
       state.planks += consumed / WOOD_PER_PLANK;
     }
@@ -1408,6 +1419,32 @@
       ctx.fill();
       ctx.fillStyle = '#3d2b1f';
       ctx.fillRect(s.x - 5, s.y, 10, 14);
+    }
+
+    // sawmills
+    for (const mill of state.sawmills) {
+      const s = worldToScreen(mill.x, mill.y);
+      if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      ctx.fillStyle = '#7f6a52';
+      ctx.fillRect(s.x - 20, s.y - 14, 40, 28);
+      ctx.fillStyle = '#5c4a38';
+      ctx.fillRect(s.x - 20, s.y - 18, 40, 6);
+      ctx.save();
+      ctx.translate(s.x + 16, s.y - 4);
+      ctx.rotate((performance.now() / 800) % (Math.PI * 2));
+      ctx.strokeStyle = '#cfcfcf';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 10, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * 10, Math.sin(a) * 10);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     // towers
@@ -1768,6 +1805,15 @@
     for (const house of state.houses) {
       if (Math.hypot(house.x - state.player.x, house.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
       const m = toMini(house.x, house.y);
+      minimapCtx.beginPath();
+      minimapCtx.arc(m.x, m.y, 2.2, 0, Math.PI * 2);
+      minimapCtx.fill();
+    }
+
+    minimapCtx.fillStyle = '#7f6a52';
+    for (const mill of state.sawmills) {
+      if (Math.hypot(mill.x - state.player.x, mill.y - state.player.y) > MINIMAP_WORLD_RADIUS) continue;
+      const m = toMini(mill.x, mill.y);
       minimapCtx.beginPath();
       minimapCtx.arc(m.x, m.y, 2.2, 0, Math.PI * 2);
       minimapCtx.fill();
