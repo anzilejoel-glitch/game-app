@@ -28,7 +28,9 @@ html, body {
   position: absolute;
   top: calc(14px + env(safe-area-inset-top));
   left: 14px;
+  right: 68px;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   z-index: 5;
 }
