@@ -71,11 +71,11 @@
   const WALL_MIN_SEPARATION = 32;
   const POPUP_LIFETIME = 900;
   const SHAKE_DURATION = 250;
-  const GOLDEN_TREE_CHANCE = 0.05;
+  const GOLDEN_TREE_CHANCE = 0.015;
   const BEAR_BONUS_CHANCE = 0.15;
   const CHEST_PICKUP_RADIUS = 36;
-  const CHEST_MIN_INTERVAL = 90000;
-  const CHEST_MAX_INTERVAL = 180000;
+  const CHEST_MIN_INTERVAL = 240000;
+  const CHEST_MAX_INTERVAL = 420000;
 
   // species: hostile ones chase & attack, peaceful ones flee; all drop meat/leather when killed
   const ANIMAL_STATS = {
@@ -727,47 +727,47 @@
 
   const SHOP_ITEMS = [
     {
-      kind: 'lumberjack', title: 'Bûcheron',
+      kind: 'lumberjack', title: 'Bûcheron', category: 'habitants',
       desc: 'Coupe des arbres et ramène le bois au dépôt',
       getCount: () => state.lumberjacks, needsCapacity: true,
     },
     {
-      kind: 'seller', title: 'Vendeur',
+      kind: 'seller', title: 'Vendeur', category: 'habitants',
       desc: '+1.0 bois/s converti en pièces',
       getCount: () => state.sellers, needsCapacity: true,
     },
     {
-      kind: 'hunter', title: 'Chasseur',
+      kind: 'hunter', title: 'Chasseur', category: 'habitants',
       desc: 'Patrouille et combat les bêtes sauvages du territoire, réduit les dégâts subis',
       getCount: () => state.hunters, needsCapacity: true,
     },
     {
-      kind: 'sawmill', title: 'Scierie',
+      kind: 'sawmill', title: 'Scierie', category: 'habitants',
       desc: 'Transforme le bois du stock en planches (2 bois = 1 planche) - placement sur la carte',
       getCount: () => state.sawmills.length, needsCapacity: true,
     },
     {
-      kind: 'house', title: 'Maison',
+      kind: 'house', title: 'Maison', category: 'construction',
       desc: '+3 places pour des habitants (placement sur la carte, payé en bois)',
       getCount: () => state.houses.length, currency: 'wood',
     },
     {
-      kind: 'tower', title: 'Tour de guet',
+      kind: 'tower', title: 'Tour de guet', category: 'construction',
       desc: 'Repousse et blesse les bêtes sauvages à proximité (placement sur la carte)',
       getCount: () => state.towers.length,
     },
     {
-      kind: 'wall', title: 'Mur',
+      kind: 'wall', title: 'Mur', category: 'construction',
       desc: 'Bloque le passage des bêtes sauvages (et le tien) - place-les côte à côte',
       getCount: () => state.walls.length,
     },
     {
-      kind: 'door', title: 'Porte',
+      kind: 'door', title: 'Porte', category: 'construction',
       desc: 'Bloque les bêtes sauvages mais te laisse passer, toi et tes équipes',
       getCount: () => state.doors.length,
     },
     {
-      kind: 'territory', title: 'Agrandir le territoire',
+      kind: 'territory', title: 'Agrandir le territoire', category: 'construction',
       desc: '+150 de rayon sûr, plus d\'arbres disponibles',
       getCount: () => state.territoryLevel,
     },
@@ -781,11 +781,14 @@
     sawmill: { hint: 'Touche la carte pour placer la scierie (Annuler)', array: () => state.sawmills },
   };
 
+  let activeShopTab = 'habitants';
+
   function renderShop() {
     const popInfo = document.getElementById('populationInfo');
     if (popInfo) popInfo.textContent = `Population : ${totalPopulation()} / ${populationCapacity()}`;
     shopList.innerHTML = '';
     for (const item of SHOP_ITEMS) {
+      if (item.category !== activeShopTab) continue;
       const count = item.getCount();
       const cost = costOf(item.kind, count);
       const currency = item.currency === 'wood' ? '🪵' : '🪙';
@@ -838,6 +841,14 @@
     shopOverlay.classList.remove('hidden');
   });
   closeShopBtn.addEventListener('click', () => shopOverlay.classList.add('hidden'));
+
+  document.querySelectorAll('.shop-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeShopTab = btn.dataset.tab;
+      document.querySelectorAll('.shop-tab').forEach(b => b.classList.toggle('active', b === btn));
+      renderShop();
+    });
+  });
 
   const achievementsBtn = document.getElementById('achievementsBtn');
   const achievementsOverlay = document.getElementById('achievementsOverlay');
@@ -1081,7 +1092,8 @@
 
     if (!state.dead) {
       const move = getMoveVector();
-      if (move.x !== 0 || move.y !== 0) {
+      p.moving = move.x !== 0 || move.y !== 0;
+      if (p.moving) {
         p.x += move.x * PLAYER_SPEED * dt;
         p.y += move.y * PLAYER_SPEED * dt;
         p.facing = Math.atan2(move.y, move.x);
@@ -1355,6 +1367,18 @@
     return { x: cssWidth / 2 + (x - state.player.x), y: cssHeight / 2 + (y - state.player.y) };
   }
 
+  function hashNoise(x, y) {
+    const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return n - Math.floor(n);
+  }
+
+  function drawShadow(sx, sy, rx, ry) {
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   function draw() {
     let shakeX = 0, shakeY = 0;
     const now = performance.now();
@@ -1369,17 +1393,49 @@
     ctx.fillStyle = '#1c3320';
     ctx.fillRect(-20, -20, cssWidth + 40, cssHeight + 40);
 
-    // subtle ground dots
-    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    // ground: soft color patches for organic terrain variation
     const camX = state.player.x, camY = state.player.y;
+    const patchSize = 220;
+    const patchStartX = Math.floor((camX - cssWidth / 2) / patchSize) * patchSize;
+    const patchStartY = Math.floor((camY - cssHeight / 2) / patchSize) * patchSize;
+    const patchShades = ['rgba(60, 110, 70, 0.10)', 'rgba(20, 45, 30, 0.14)', 'rgba(90, 140, 90, 0.07)'];
+    for (let wx = patchStartX - patchSize; wx < camX + cssWidth / 2 + patchSize; wx += patchSize) {
+      for (let wy = patchStartY - patchSize; wy < camY + cssHeight / 2 + patchSize; wy += patchSize) {
+        const n = hashNoise(wx, wy);
+        if (n < 0.35) continue;
+        const s = worldToScreen(wx + patchSize / 2, wy + patchSize / 2);
+        ctx.fillStyle = patchShades[Math.floor(n * 10) % patchShades.length];
+        ctx.beginPath();
+        ctx.ellipse(s.x, s.y, patchSize * 0.7, patchSize * 0.55, n * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // ground texture: varied dots and small grass tufts
     const startX = Math.floor((camX - cssWidth / 2) / 64) * 64;
     const startY = Math.floor((camY - cssHeight / 2) / 64) * 64;
     for (let wx = startX; wx < camX + cssWidth / 2; wx += 64) {
       for (let wy = startY; wy < camY + cssHeight / 2; wy += 64) {
+        const n = hashNoise(wx + 0.5, wy + 0.5);
         const s = worldToScreen(wx, wy);
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, 2, 0, Math.PI * 2);
-        ctx.fill();
+        if (n > 0.82) {
+          // small grass tuft
+          ctx.strokeStyle = 'rgba(140, 200, 140, 0.10)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(s.x - 3, s.y + 3);
+          ctx.lineTo(s.x - 1, s.y - 4);
+          ctx.moveTo(s.x, s.y + 3);
+          ctx.lineTo(s.x + 1, s.y - 5);
+          ctx.moveTo(s.x + 3, s.y + 3);
+          ctx.lineTo(s.x + 4, s.y - 3);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = `rgba(255,255,255,${0.02 + n * 0.05})`;
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, 1.4 + n * 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
@@ -1394,8 +1450,15 @@
     ctx.setLineDash([]);
 
     // depot
-    ctx.fillStyle = '#8d5a2b';
+    drawShadow(baseScreen.x, baseScreen.y + 22, 30, 8);
+    const depotGrad = ctx.createLinearGradient(baseScreen.x - 26, 0, baseScreen.x + 26, 0);
+    depotGrad.addColorStop(0, '#a06b35');
+    depotGrad.addColorStop(1, '#7a4c22');
+    ctx.fillStyle = depotGrad;
     ctx.fillRect(baseScreen.x - 26, baseScreen.y - 20, 52, 40);
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(baseScreen.x - 26, baseScreen.y - 20, 52, 40);
     ctx.fillStyle = '#5c3a1a';
     ctx.beginPath();
     ctx.moveTo(baseScreen.x - 32, baseScreen.y - 20);
@@ -1403,11 +1466,14 @@
     ctx.lineTo(baseScreen.x + 32, baseScreen.y - 20);
     ctx.closePath();
     ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.stroke();
 
     // houses
     for (const house of state.houses) {
       const s = worldToScreen(house.x, house.y);
       if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      drawShadow(s.x, s.y + 17, 20, 6);
       ctx.fillStyle = '#a9764f';
       ctx.fillRect(s.x - 18, s.y - 12, 36, 26);
       ctx.fillStyle = '#6b4a2f';
@@ -1425,6 +1491,7 @@
     for (const mill of state.sawmills) {
       const s = worldToScreen(mill.x, mill.y);
       if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      drawShadow(s.x, s.y + 18, 22, 6);
       ctx.fillStyle = '#7f6a52';
       ctx.fillRect(s.x - 20, s.y - 14, 40, 28);
       ctx.fillStyle = '#5c4a38';
@@ -1455,6 +1522,7 @@
       ctx.beginPath();
       ctx.arc(s.x, s.y, TOWER_RADIUS, 0, Math.PI * 2);
       ctx.stroke();
+      drawShadow(s.x, s.y + 12, 12, 4.5);
       ctx.fillStyle = '#7f6a52';
       ctx.fillRect(s.x - 10, s.y - 30, 20, 40);
       ctx.fillStyle = '#9b59b6';
@@ -1537,25 +1605,38 @@
       if (!t.alive) continue;
       const s = worldToScreen(t.x, t.y);
       if (s.x < -50 || s.x > cssWidth + 50 || s.y < -50 || s.y > cssHeight + 50) continue;
-      ctx.fillStyle = '#6b4321';
+      const sway = Math.sin(now / 1600 + (t.x + t.y) * 0.01) * 2;
+      drawShadow(s.x, s.y + 16, 14, 5);
+      ctx.fillStyle = '#5c3a1f';
       ctx.fillRect(s.x - 6, s.y - 8, 12, 26);
-      ctx.fillStyle = t.golden ? '#f1c40f' : '#2e7d42';
-      ctx.beginPath();
-      ctx.arc(s.x, s.y - 22, TREE_CANOPY_RADIUS, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(s.x - 6, s.y - 8, 12, 26);
+      const canopyX = s.x + sway;
+      const canopyY = s.y - 22;
+      const grad = ctx.createRadialGradient(canopyX - 8, canopyY - 8, 3, canopyX, canopyY, TREE_CANOPY_RADIUS);
       if (t.golden) {
-        ctx.strokeStyle = 'rgba(255, 243, 176, 0.7)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(s.x, s.y - 22, TREE_CANOPY_RADIUS + 4, 0, Math.PI * 2);
-        ctx.stroke();
+        grad.addColorStop(0, '#fff3b0');
+        grad.addColorStop(1, '#e0a800');
+      } else {
+        grad.addColorStop(0, '#4a9d5f');
+        grad.addColorStop(1, '#1f5c30');
       }
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(canopyX, canopyY, TREE_CANOPY_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = t.golden ? 'rgba(255, 243, 176, 0.7)' : 'rgba(15, 40, 20, 0.4)';
+      ctx.lineWidth = t.golden ? 2 : 1.5;
+      ctx.beginPath();
+      ctx.arc(canopyX, canopyY, TREE_CANOPY_RADIUS + (t.golden ? 4 : 0), 0, Math.PI * 2);
+      ctx.stroke();
       if (state.chopTarget === t) {
         const ratio = Math.max(0, t.hp / TREE_MAX_HP);
         ctx.strokeStyle = '#ffe066';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(s.x, s.y - 22, TREE_CANOPY_RADIUS + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - ratio));
+        ctx.arc(canopyX, canopyY, TREE_CANOPY_RADIUS + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - ratio));
         ctx.stroke();
       }
     }
@@ -1565,6 +1646,7 @@
       const s = worldToScreen(chest.x, chest.y);
       if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
       const pulse = 4 + Math.sin(performance.now() / 250) * 3;
+      drawShadow(s.x, s.y + 10, 15, 4.5);
       ctx.strokeStyle = 'rgba(255, 209, 102, 0.4)';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -1582,6 +1664,7 @@
     for (const w of state.workers) {
       const s = worldToScreen(w.x, w.y);
       if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      drawShadow(s.x, s.y + 10, 9, 3.4);
       ctx.fillStyle = '#c9852b';
       ctx.beginPath();
       ctx.arc(s.x, s.y, 12, 0, Math.PI * 2);
@@ -1599,6 +1682,7 @@
     for (const h of state.hunterUnits) {
       const s = worldToScreen(h.x, h.y);
       if (s.x < -30 || s.x > cssWidth + 30 || s.y < -30 || s.y > cssHeight + 30) continue;
+      drawShadow(s.x, s.y + 10, 9, 3.4);
       ctx.fillStyle = h.state === 'attacking' ? '#e74c3c' : '#7f8c8d';
       ctx.beginPath();
       ctx.arc(s.x, s.y, 12, 0, Math.PI * 2);
@@ -1620,7 +1704,11 @@
       const s = worldToScreen(b.x, b.y);
       if (s.x < -40 || s.x > cssWidth + 40 || s.y < -40 || s.y > cssHeight + 40) continue;
       const aggro = Math.hypot(b.x - state.player.x, b.y - state.player.y) < BEAR_AGGRO_RANGE;
-      ctx.fillStyle = aggro ? '#7a3b1e' : '#5c3a2e';
+      drawShadow(s.x, s.y + 14, 13, 5);
+      const bGrad = ctx.createRadialGradient(s.x - 5, s.y - 6, 2, s.x, s.y, 16);
+      if (aggro) { bGrad.addColorStop(0, '#a5552a'); bGrad.addColorStop(1, '#6b2f14'); }
+      else { bGrad.addColorStop(0, '#7a5442'); bGrad.addColorStop(1, '#48301f'); }
+      ctx.fillStyle = bGrad;
       ctx.beginPath();
       ctx.arc(s.x, s.y, 16, 0, Math.PI * 2);
       ctx.fill();
@@ -1628,6 +1716,11 @@
       ctx.arc(s.x - 10, s.y - 12, 6, 0, Math.PI * 2);
       ctx.arc(s.x + 10, s.y - 12, 6, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 16, 0, Math.PI * 2);
+      ctx.stroke();
       // hp bar
       const ratio = Math.max(0, b.hp / BEAR_MAX_HP);
       ctx.fillStyle = 'rgba(0,0,0,0.4)';
@@ -1650,6 +1743,7 @@
       if (s.x < -40 || s.x > cssWidth + 40 || s.y < -40 || s.y > cssHeight + 40) continue;
       const stats = ANIMAL_STATS[h.species];
       const aggro = Math.hypot(h.x - state.player.x, h.y - state.player.y) < stats.aggroRange;
+      drawShadow(s.x, s.y + 13, 12, 4.5);
       if (h.species === 'wolf') {
         ctx.fillStyle = aggro ? '#4a4a4a' : '#6b6b6b';
         ctx.beginPath();
@@ -1690,6 +1784,7 @@
       const s = worldToScreen(c.x, c.y);
       if (s.x < -40 || s.x > cssWidth + 40 || s.y < -40 || s.y > cssHeight + 40) continue;
       const stats = ANIMAL_STATS[c.species];
+      drawShadow(s.x, s.y + 10, 10, 3.6);
       if (c.species === 'deer') {
         ctx.fillStyle = '#c9a876';
         ctx.beginPath();
@@ -1727,18 +1822,29 @@
 
     // player
     if (!state.dead) {
-      const s = worldToScreen(state.player.x, state.player.y);
-      const flashing = performance.now() < state.player.invulnerableUntil && Math.floor(performance.now() / 100) % 2 === 0;
+      const p = state.player;
+      const bob = p.moving ? Math.sin(now / 90) * 2.5 : 0;
+      const s = worldToScreen(p.x, p.y);
+      s.y += bob;
+      const flashing = now < p.invulnerableUntil && Math.floor(now / 100) % 2 === 0;
       ctx.globalAlpha = flashing ? 0.4 : 1;
-      ctx.fillStyle = '#3498db';
+      drawShadow(s.x, s.y + 17 - bob * 0.4, 13, 5);
+      const grad = ctx.createRadialGradient(s.x - 5, s.y - 6, 2, s.x, s.y, 17);
+      grad.addColorStop(0, '#6ab6ec');
+      grad.addColorStop(1, '#2f7fb8');
+      ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.arc(s.x, s.y, 16, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = 'rgba(20, 50, 70, 0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
-      ctx.lineTo(s.x + Math.cos(state.player.facing) * 22, s.y + Math.sin(state.player.facing) * 22);
+      ctx.lineTo(s.x + Math.cos(p.facing) * 22, s.y + Math.sin(p.facing) * 22);
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
