@@ -785,7 +785,9 @@
 
   function renderShop() {
     const popInfo = document.getElementById('populationInfo');
-    if (popInfo) popInfo.textContent = `Population : ${totalPopulation()} / ${populationCapacity()}`;
+    if (popInfo) {
+      popInfo.innerHTML = `Population : ${totalPopulation()} / ${populationCapacity()}<br>Bois en stock : ${Math.floor(state.stockpile)} / ${STOCKPILE_CAP}`;
+    }
     shopList.innerHTML = '';
     for (const item of SHOP_ITEMS) {
       if (item.category !== activeShopTab) continue;
@@ -1146,14 +1148,19 @@
         }
       }
 
-      // Selling at depot
+      // Depositing wood at the depot: fills the shared stockpile first (used for
+      // Maison/Scierie/etc.); only overflow once it's full is sold directly for coins.
       const distDepot = Math.hypot(p.x - BASE_X, p.y - BASE_Y);
       const atDepot = distDepot < DEPOT_RADIUS;
       sellHint.classList.toggle('hidden', !(atDepot && p.wood > 0));
       if (atDepot && p.wood > 0) {
-        const sold = Math.min(p.wood, SELL_RATE * dt);
-        p.wood -= sold;
-        state.coins += sold * WOOD_PRICE;
+        const moved = Math.min(p.wood, SELL_RATE * dt);
+        p.wood -= moved;
+        const roomInStockpile = Math.max(0, STOCKPILE_CAP - state.stockpile);
+        const toStockpile = Math.min(moved, roomInStockpile);
+        const toCoins = moved - toStockpile;
+        state.stockpile += toStockpile;
+        if (toCoins > 0) state.coins += toCoins * WOOD_PRICE;
         if (now - lastCoinSoundAt > 350) { lastCoinSoundAt = now; sfx.coin(); }
       }
     }
@@ -1351,7 +1358,7 @@
 
     // HUD
     coinsLabel.textContent = Math.floor(state.coins);
-    woodLabel.textContent = `${Math.floor(p.wood)}/${p.woodCapacity}`;
+    woodLabel.textContent = `${Math.floor(p.wood)}/${p.woodCapacity} · stock ${Math.floor(state.stockpile)}`;
     meatLabel.textContent = Math.floor(state.meat);
     leatherLabel.textContent = Math.floor(state.leather);
     plankLabel.textContent = Math.floor(state.planks);
