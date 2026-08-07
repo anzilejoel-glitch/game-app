@@ -742,7 +742,7 @@
       getCount: () => state.hunters, needsCapacity: true,
     },
     {
-      kind: 'sawmill', title: 'Scierie', category: 'habitants',
+      kind: 'sawmill', title: 'Scierie', category: 'construction',
       desc: 'Transforme le bois du stock en planches (2 bois = 1 planche) - placement sur la carte',
       getCount: () => state.sawmills.length, needsCapacity: true,
     },
